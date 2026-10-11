@@ -178,59 +178,145 @@ function traceSolution(expression, cards) {
   return { steps, aceValues };
 }
 
-/** Analyze four values on demand; state memoization favors the easiest valid path. */
-export function analyzeHand(cards) {
-  cards = cards.map(c => typeof c === 'string' ? { rank: c, suit: '' } : c);
-  const key = canonicalKey(cards);
-  const cached = analysisCache.get(key);
-  if (cached) return cached;
-  if (cards.length !== 4) throw Error('Exactly 4 cards required');
-  let best = null, bestCost = Infinity, solutions = 0;
-  const seen = new Map();
-  function walk(items, score) {
-    if (items.length === 1) {
-      if (equalR(items[0].value, rational(TARGET))) {
-        solutions++;
-        if (score < bestCost) { best = items[0]; bestCost = score; }
-      }
-      return;
-    }
-    const state = items.map(i => formatR(i.value)).sort().join('|');
-    if (seen.has(state) && seen.get(state) <= score) return;
-    seen.set(state, score);
+/** Difficulty v2 scores the easiest human-style route, NOT the number of
+ *  terminal branches encountered by memoization. All scores are nonnegative
+ *  integers, so pruning more expensive paths to the same numeric state is safe.
+ *
+ *  Basic arithmetic is searched first and always wins over a solution using
+ *  ^, log, or root. This avoids treating tricks such as 1^3 as the easiest
+ *  solution when a normal arithmetic solution exists.
+ */
+export const DIFFICULTY_VERSION = 2;
+const BASIC_OPERATIONS = Object.entries(OPERATIONS).filter(([name]) => ['+', '-', '*', '/'].includes(name));
+const ALL_OPERATIONS = Object.entries(OPERATIONS);
+
+function humanStepCost(symbol, op, value) {
+  // Fractions and negative intermediate values require more mental work.
+  // Use BigInt comparisons to avoid lossy floating-point conversion.
+  let cost = op.cost + (symbol === '*' ? 1 : 0);
+  if (value.d !== 1n) cost += 3;
+  if (value.n < 0n) cost += 1;
+  if (abs(value.n) >= 100n * value.d) cost += 1;
+  if (abs(value.n) >= 1000n * value.d) cost += 2;
+  return cost;
+}
+
+/** Count distinct useful first moves, rather than counting winning leaves from
+ *  a pruned DFS. Two moves leading to the same three-number state count once.
+ *  Every counted move has a basic-arithmetic completion with cost <= 8.
+ *  This is independent of card order and search/pruning order.
+ */
+function countHelpfulOpenings(cards) {
+  const remainingCostCache = new Map();
+  function minimumRemainingCost(items) {
+    if (items.length === 1) return equalR(items[0], rational(TARGET)) ? 0 : Infinity;
+    const state = items.map(formatR).sort().join('|');
+    if (remainingCostCache.has(state)) return remainingCostCache.get(state);
+    let best = Infinity;
     for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
-      const remaining = items.filter((_, index) => index !== i && index !== j);
-      for (const [symbol, op] of Object.entries(OPERATIONS)) {
+      const remainder = items.filter((_, index) => index !== i && index !== j);
+      for (const [symbol, op] of BASIC_OPERATIONS) {
         const pairs = op.commutative ? [[items[i], items[j]]] : [[items[i], items[j]], [items[j], items[i]]];
         for (const [a, b] of pairs) {
           try {
-            const item = combine(a, symbol, b);
-            const extra = op.cost + (item.value.d !== 1n ? 1 : 0);
-            walk([...remaining, item], score + extra);
-          } catch { /* invalid domain, noninteger root/log, etc. */ }
+            const value = op.evaluate(a, b);
+            best = Math.min(best, humanStepCost(symbol, op, value) + minimumRemainingCost([...remainder, value]));
+          } catch { /* Invalid operation */ }
+        }
+      }
+    }
+    remainingCostCache.set(state, best);
+    return best;
+  }
+  const useful = new Set();
+  function tryOpenings(values) {
+    for (let i = 0; i < values.length; i++) for (let j = i + 1; j < values.length; j++) {
+      const remaining = values.filter((_, index) => index !== i && index !== j);
+      for (const [symbol, op] of BASIC_OPERATIONS) {
+        const pairs = op.commutative ? [[values[i], values[j]]] : [[values[i], values[j]], [values[j], values[i]]];
+        for (const [a, b] of pairs) {
+          try {
+            const value = op.evaluate(a, b);
+            if (humanStepCost(symbol, op, value) + minimumRemainingCost([...remaining, value]) > 8) continue;
+            useful.add([...remaining, value].map(formatR).sort().join('|'));
+          } catch { /* Invalid operation */ }
         }
       }
     }
   }
-  function variants(i, initial) {
-    if (i === cards.length) { walk(initial, 0); return; }
-    for (const ace of cardChoices(cards[i].rank)) variants(i + 1, [...initial, leaf(cards[i], i, ace)]);
+  function variants(i, values) {
+    if (i === cards.length) { tryOpenings(values); return; }
+    for (const ace of cardChoices(cards[i].rank)) variants(i + 1, [...values, rational(ace)]);
   }
   variants(0, []);
-  // Reachable winning branches (under numeric-state deduplication) are a
-  // rough measure of how many routes a human might notice. They are NOT a
-  // count of every syntactically different solution.
-  let difficulty = 'Unsolvable';
-  if (best !== null) {
-    if (bestCost <= 3) difficulty = solutions >= 8 ? 'Easy' : solutions >= 3 ? 'Medium' : 'Hard';
-    else if (bestCost <= 5) difficulty = solutions >= 5 ? 'Medium' : solutions >= 2 ? 'Hard' : 'Expert';
-    else if (bestCost <= 8) difficulty = solutions >= 4 ? 'Hard' : 'Expert';
-    else difficulty = 'Expert';
+  return useful.size;
+}
+
+/** Analyze a four-card hand while preserving the exact solver and its proof. */
+export function analyzeHand(cards) {
+  cards = cards.map(c => typeof c === 'string' ? { rank: c, suit: '' } : c);
+  if (cards.length !== 4) throw Error('Exactly 4 cards required');
+  const key = canonicalKey(cards);
+  const cached = analysisCache.get(key);
+  if (cached) return cached;
+
+  function findBest(operations) {
+    let best = null, bestCost = Infinity, solutions = 0;
+    const seen = new Map();
+    function walk(items, score) {
+      if (score > bestCost) return;
+      if (items.length === 1) {
+        if (equalR(items[0].value, rational(TARGET))) {
+          solutions++;
+          if (score < bestCost) { best = items[0]; bestCost = score; }
+        }
+        return;
+      }
+      const state = items.map(i => formatR(i.value)).sort().join('|');
+      if (seen.has(state) && seen.get(state) <= score) return;
+      seen.set(state, score);
+      for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+        const remaining = items.filter((_, index) => index !== i && index !== j);
+        for (const [symbol, op] of operations) {
+          const pairs = op.commutative ? [[items[i], items[j]]] : [[items[i], items[j]], [items[j], items[i]]];
+          for (const [a, b] of pairs) {
+            try {
+              const item = combine(a, symbol, b);
+              walk([...remaining, item], score + humanStepCost(symbol, op, item.value));
+            } catch { /* Invalid domain, oversized intermediate, etc. */ }
+          }
+        }
+      }
+    }
+    function variants(i, initial) {
+      if (i === cards.length) { walk(initial, 0); return; }
+      for (const ace of cardChoices(cards[i].rank)) variants(i + 1, [...initial, leaf(cards[i], i, ace)]);
+    }
+    variants(0, []);
+    return { best, bestCost, solutions, exploredStates: seen.size };
   }
+
+  const basic = findBest(BASIC_OPERATIONS);
+  const resultSearch = basic.best ? basic : findBest(ALL_OPERATIONS);
+  const { best, bestCost } = resultSearch;
+  // Exceptional arithmetic can still be Expert, but a division by a small
+  // exact integer is never Expert solely because few routes were discovered.
+  const helpfulOpenings = basic.best ? countHelpfulOpenings(cards) : 0;
+  // Scarcity matters only for otherwise approachable hands. Expert is reserved
+  // for advanced-only solutions or exceptional arithmetic/fraction work.
+  const difficulty = !best ? 'Unsolvable'
+    : !basic.best || bestCost >= 10 ? 'Expert'
+      : bestCost <= 3 ? 'Easy'
+        : bestCost >= 6 ? 'Hard'
+          : bestCost === 4
+            ? helpfulOpenings >= 9 ? 'Easy' : 'Medium'
+            : helpfulOpenings >= 3 ? 'Medium' : 'Hard';
   const trace = best ? traceSolution(best.expr, cards) : null;
-  const result = { key, solvable: !!best, difficulty, score: bestCost, solution: best?.text || null,
-    solutionSteps: trace?.steps || null, solutionAceValues: trace?.aceValues || [],
-    exploredStates: seen.size, solutionStates: solutions };
+  const result = { key, solvable: !!best, difficulty, score: bestCost,
+    difficultyVersion: DIFFICULTY_VERSION, helpfulOpenings, usesAdvanced: !basic.best && !!best,
+    solution: best?.text || null, solutionSteps: trace?.steps || null,
+    solutionAceValues: trace?.aceValues || [], exploredStates: resultSearch.exploredStates,
+    solutionStates: resultSearch.solutions };
   analysisCache.set(key, result);
   return result;
 }

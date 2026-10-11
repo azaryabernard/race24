@@ -19,7 +19,7 @@ Open http://localhost:4173/. Read **START_HERE.md** for step-by-step Netlify + S
 - Solo stopwatch and mobile-friendly tap/drag math tiles. Undo, clear, Ace switch; finish only after combining all four cards into exactly 24.
 - **Give up / Show solution** under the Solo controls: stops the timer, displays three exact intermediate calculations (including the chosen Ace values), and records **no personal best or online leaderboard time**. Deal cards again to restart. It is intentionally a Solo-only feature; do not make it available in future multiplayer rounds.
 - Exact arithmetic using `BigInt` fractions. Rational division is allowed, powers require integer exponents, logs/roots must return exact integers. There is a maximum exponent and a 256-bit size guard.
-- Heuristic Easy/Medium/Hard/Expert ratings based on search complexity; **not** based on AFK time.
+- Difficulty v2: Easy/Medium/Hard/Expert ratings based on the lowest-complexity basic-arithmetic solution and the number of distinct helpful first moves. Advanced-only or exceptionally intricate arithmetic hands are Expert; ratings do not use player time or the number of pruned DFS winning leaves. Existing personal-best times are preserved when upgrading; see `DIFFICULTY_V2_SETUP.md`.
 - Local personal records in browser storage, **light/dark mode** saved per device.
 - Optional Supabase **anonymous authentication**, nicknames + separate invitation codes per family, **personal recovery key**, private family leaderboards and server-verified times.
 - Organizer bootstrap, **admin recovery key**, invitation rotation (does not delete/transfer any records), and optional admin recovery-key rotation.

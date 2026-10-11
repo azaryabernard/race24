@@ -1,5 +1,5 @@
 import {
-  OPERATIONS, DIFFICULTIES, TARGET, drawHand, analyzeHand, canonicalKey,
+  OPERATIONS, DIFFICULTIES, DIFFICULTY_VERSION, TARGET, drawHand, analyzeHand, canonicalKey,
   cardChoices, leaf, combine, equalR, rational, formatR, verifySolution,
 } from './engine.js';
 import { config } from './config.js';
@@ -9,7 +9,29 @@ const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const fmt = ms => (ms / 1000).toFixed(2) + 's';
 const timerText = ms => { const secs = Math.floor(ms / 1000); return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}.${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`; };
 const storageKey = '24race-v1-records';
-const safeLoad = () => { try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { return {}; } };
+// Upgrade old local records in place; preserve every original best time and
+// attempt count. The underlying math rules / storage key have not changed.
+const safeLoad = () => {
+  try {
+    const loaded = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) return {};
+    let changed = false;
+    for (const [key, entry] of Object.entries(loaded)) {
+      if (!entry || typeof entry !== 'object' || entry.difficultyVersion === DIFFICULTY_VERSION) continue;
+      const values = key.split('-');
+      if (values.length !== 4 || !values.every(v => /^(10|[1-9])$/.test(v))) continue;
+      try {
+        const report = analyzeHand(values.map(v => v === '1' ? 'A' : v));
+        if (!report.solvable) continue;
+        entry.difficulty = report.difficulty;
+        entry.difficultyVersion = DIFFICULTY_VERSION;
+        changed = true;
+      } catch { /* Keep older records untouched if their hand key is invalid. */ }
+    }
+    if (changed) localStorage.setItem(storageKey, JSON.stringify(loaded));
+    return loaded;
+  } catch { return {}; }
+};
 const save = () => { try { localStorage.setItem(storageKey, JSON.stringify(records)); } catch { notify('Local storage is unavailable.', 'error'); } };
 let records = safeLoad();
 let supabase = null, user = null, familyMember = false, familyName = null;
@@ -256,7 +278,7 @@ for (const zone of document.querySelectorAll('[data-slot]')) {
 }
 function updateRecords(key, difficulty, ms) {
   const old = records[key] || { bestMs: Infinity, attempts: 0 };
-  records[key] = { bestMs: Math.min(old.bestMs, ms), attempts: (old.attempts || 0) + 1, difficulty, updatedAt: Date.now() };
+  records[key] = { bestMs: Math.min(old.bestMs, ms), attempts: (old.attempts || 0) + 1, difficulty, difficultyVersion: DIFFICULTY_VERSION, updatedAt: Date.now() };
   save(); renderStats();
   return ms < old.bestMs;
 }
@@ -364,12 +386,18 @@ async function newHand() {
         const challengeFamily = selectedFamilyId;
         const { data, error } = await supabase.functions.invoke('solo', { body: { action: 'start', familyId: challengeFamily } });
         if (error || !data?.cards || !data?.challengeId) throw Error(error?.message || 'Could not begin verified run');
-        newCards = data.cards; cloudChallengeId = data.challengeId;
+        // Reject an out-of-date Edge Function rather than mixing old labels
+        // with v2 personal bests and leaderboard categories.
+        const checkedReport = analyzeHand(data.cards);
+        if (!checkedReport.solvable || checkedReport.key !== data.handKey || checkedReport.difficulty !== data.difficulty)
+          throw Error('Server difficulty version differs; deploy the updated solo function');
+        newCards = data.cards; report = checkedReport;
+        cloudChallengeId = data.challengeId;
         cloudChallengeFamilyId = challengeFamily; cloudEligible = true;
-        report = data.difficulty && data.handKey
-          ? { key: data.handKey, difficulty: data.difficulty, score: data.score, solvable: true }
-          : analyzeHand(newCards);
-      } catch (error) { notify(`Online run unavailable (${error.message}). Playing locally instead.`, 'error'); }
+      } catch (error) {
+        newCards = null; cloudChallengeId = null; cloudChallengeFamilyId = null; cloudEligible = false;
+        notify(`Online run unavailable (${error.message}). Playing locally instead.`, 'error');
+      }
     }
     if (!newCards) {
       for (let i = 0; i < 60; i++) {
