@@ -44,23 +44,53 @@ function updateSelection() {
 }
 function renderTiles() {
   const area = $('tiles'); area.replaceChildren();
+  if (!tiles.length) {
+    // Quiet card backs make the deck visible before the first timed hand.
+    for (let i = 0; i < 4; i++) {
+      const back = document.createElement('div');
+      back.className = 'card-back'; back.setAttribute('aria-hidden', 'true');
+      back.innerHTML = '<span class="card-back-pattern">✦</span>';
+      area.append(back);
+    }
+  }
   for (const tile of tiles) {
     const el = document.createElement('button'); el.type = 'button';
     el.className = 'number-tile'; el.dataset.tileId = String(tile.id); el.title = tile.text;
-    const isUncombinedAce = Number.isInteger(tile.id) && tile.id < 4 && cards[tile.id]?.rank === 'A';
     const original = tile.id < 4 ? cards[tile.id] : null;
-    if (original && ['♥', '♦'].includes(original.suit)) el.classList.add('red');
-    const number = document.createElement('span'); number.className = 'tile-value'; number.textContent = formatR(tile.value);
-    const sub = document.createElement('span'); sub.className = 'origin'; sub.textContent = original ? `${original.rank}${original.suit}` : 'RESULT';
-    el.append(number, sub);
-    const wrap = document.createElement('div'); wrap.className = 'tile-wrap';
-    wrap.append(el);
+    const isUncombinedAce = original?.rank === 'A';
+    if (original) {
+      // Card faces always show the printed rank, not the value used in arithmetic.
+      // J/Q/K all calculate as 10; A can calculate as 1 or 11.
+      el.classList.add('playing-card');
+      if (['♥', '♦'].includes(original.suit)) el.classList.add('red');
+      const corner = (position) => {
+        const span = document.createElement('span');
+        span.className = `card-corner ${position}`;
+        const rank = document.createElement('span'); rank.className = 'card-rank'; rank.textContent = original.rank;
+        const suit = document.createElement('span'); suit.className = 'corner-suit'; suit.textContent = original.suit;
+        span.append(rank, suit);
+        return span;
+      };
+      const pip = document.createElement('span'); pip.className = 'card-pip';
+      pip.textContent = original.suit; pip.setAttribute('aria-hidden', 'true');
+      el.append(corner('top'), pip, corner('bottom'));
+      const suitName = ({'♠':'spades','♥':'hearts','♦':'diamonds','♣':'clubs'})[original.suit] || original.suit;
+      el.setAttribute('aria-label', `${original.rank} of ${suitName}, worth ${formatR(tile.value)}`);
+    } else {
+      // Only intermediate results show a numerical face, centered where the suit was.
+      el.classList.add('result-card');
+      const number = document.createElement('span');
+      number.className = 'result-value'; number.textContent = formatR(tile.value);
+      el.append(number);
+      el.setAttribute('aria-label', `Combined result: ${formatR(tile.value)}`);
+    }
+    const wrap = document.createElement('div'); wrap.className = 'tile-wrap'; wrap.append(el);
     if (isUncombinedAce) {
       el.addEventListener('contextmenu', e => { e.preventDefault(); toggleAce(tile.id); });
-      const toggle = document.createElement('button');
-      toggle.type = 'button'; toggle.className = 'ace-switch';
-      toggle.textContent = `A: ${formatR(tile.value)} ↔ ${tile.value.n === 1n ? '11' : '1'}`;
-      toggle.setAttribute('aria-label', 'Switch Ace between 1 and 11');
+      const toggle = document.createElement('button'); toggle.type = 'button';
+      toggle.className = 'ace-switch';
+      toggle.textContent = `A = ${formatR(tile.value)} · switch`;
+      toggle.setAttribute('aria-label', `Ace currently counts as ${formatR(tile.value)}. Switch to ${tile.value.n === 1n ? '11' : '1'}`);
       toggle.addEventListener('click', () => toggleAce(tile.id));
       wrap.append(toggle);
     }
@@ -374,13 +404,13 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = active;
   $('themeBtn').textContent = active === 'light' ? '☾ Dark' : '☀ Light';
   $('themeBtn').setAttribute('aria-label', `Switch to ${active === 'light' ? 'dark' : 'light'} mode`);
-  $('themeMeta').content = active === 'light' ? '#f2f6fa' : '#0c1321';
+  $('themeMeta').content = active === 'light' ? '#f6f4ea' : '#1a2422';
   try { localStorage.setItem('24race-theme', active); } catch { /* storage optional */ }
 }
 function initialTheme() {
   let stored;
   try { stored = localStorage.getItem('24race-theme'); } catch { /* storage unavailable */ }
-  applyTheme(stored || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+  applyTheme(stored === 'dark' ? 'dark' : 'light');
 }
 function wire() {
   $('newHandBtn').addEventListener('click', newHand);
