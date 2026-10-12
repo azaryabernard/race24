@@ -1,30 +1,37 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0c1321" id="themeMeta" />
-  <meta name="description" content="24 Race: solve four cards with exact maths as fast as you can." />
-  <title>24 Race — Math, but faster</title>
+  <meta name="theme-color" content="#f6f4ea" id="themeMeta" />
+  <meta name="description" content="Race24: four cards, one target. Solve the puzzle before the clock catches you." />
+  <title>Race24 — Four cards. Make 24.</title>
+  <!-- Resolve asset URLs at /race24 AND /race24/, while keeping the direct Netlify site working. -->
+  <script>
+    const gameBase = document.createElement('base');
+    gameBase.href = location.pathname === '/race24' || location.pathname.startsWith('/race24/')
+      ? '/race24/' : '/';
+    document.head.appendChild(gameBase);
+  </script>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="24 Race home"><span class="brand-mark">24<span class="brand-flash">✦</span></span><span>RACE</span></a>
+      <a class="brand" href="./" aria-label="Race24 home"><span class="brand-mark">R<span class="brand-flash">24</span></span><span>Race<span class="brand-last">24</span></span></a>
       <nav class="nav-tabs" aria-label="Game modes"><button class="nav-tab active" type="button">Solo trial</button><button class="nav-tab" id="multiSoon" type="button">Multiplayer <span class="soon">soon</span></button></nav>
       <div class="top-actions"><button class="button subtle small theme-toggle" id="themeBtn" type="button" aria-label="Switch to light mode">☀ Light</button><span class="online-pill" id="onlinePill"><span class="status-dot"></span>Guest mode</span><button class="button subtle small" id="accountBtn" type="button">Join family</button></div>
     </header>
 
     <main>
       <section class="hero">
-        <div><span class="eyebrow">THINK FAST · MAKE 24</span><h1>Four cards. <em>One number.</em></h1><p>Combine every card exactly once. Beat your time, master every combination, and climb the ranks.</p></div>
-        <div class="hero-ornament" aria-hidden="true">24<span>✳</span></div>
+        <div><span class="eyebrow">A LITTLE CARD GAME ABOUT NUMBERS</span><h1>Four cards.<br><em>Make 24.</em></h1><p>A fresh hand, a ticking clock, and plenty of ways to get to 24. How quickly can you find one?</p></div>
+        <div class="hero-ornament" aria-hidden="true"><span class="mini-card mini-back">♣</span><span class="mini-card mini-front">A<span>♠</span></span></div>
       </section>
 
       <div class="main-grid">
         <section class="play-panel panel" aria-labelledby="playTitle">
-          <div class="panel-heading"><div><div class="kicker">SOLO / TIME TRIAL</div><h2 id="playTitle">The arena</h2></div><div class="timer-wrap"><span class="timer-label">YOUR TIME</span><strong class="timer" id="timer">00:00.00</strong></div></div>
+          <div class="panel-heading"><div><div class="kicker">SOLO // TIME TRIAL</div><h2 id="playTitle">Your hand</h2></div><div class="timer-wrap"><span class="timer-label">YOUR TIME</span><strong class="timer" id="timer">00:00.00</strong></div></div>
           <div class="arena-meta"><span id="roundText">Round 01</span><span class="chip" id="handKeyChip">Ready for a hand</span><span class="chip hidden" id="difficultyChip"></span></div>
           <div id="banner" class="banner" role="status" aria-live="polite">Press “New hand” to start the clock.</div>
           <div id="tiles" class="tiles" aria-label="Number tiles"></div>
@@ -32,7 +39,7 @@
           <div id="operations" class="operations" aria-label="Math operations"></div>
           <div class="combine-zone" id="combineZone"><div class="operand-target" data-slot="a"><span class="operand-title">FIRST NUMBER</span><strong id="slotA">Tap or drop</strong></div><div class="op-display" id="opDisplay">?</div><div class="operand-target" data-slot="b"><span class="operand-title">SECOND NUMBER</span><strong id="slotB">Tap or drop</strong></div></div>
           <p class="microcopy">Tip: tap <b>number → operation → number</b>, or select an operation and drag one tile onto another. For <b>log</b>, the second tile is the base. For <b>root</b>, it is the degree.</p>
-          <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button primary" id="newHandBtn" type="button">New hand <span>↗</span></button></div>
+          <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button primary" id="newHandBtn" type="button">Deal cards <span>↗</span></button></div>
           <div id="result" class="result hidden" role="status" aria-live="polite"></div>
         </section>
 
@@ -44,7 +51,7 @@
 
       <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is an initial mathematical estimate, revealed after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
     </main>
-    <footer class="footer"><span>24 RACE / made for curious minds</span><span>Solo live · Multiplayer-ready core</span></footer>
+    <footer class="footer"><span>RACE24 / a tiny card puzzle</span><span>Solo live · Multiplayer-ready core</span></footer>
   </div>
 
   <dialog id="accountDialog" class="modal">
