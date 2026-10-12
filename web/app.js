@@ -13,6 +13,8 @@ const safeLoad = () => { try { return JSON.parse(localStorage.getItem(storageKey
 const save = () => { try { localStorage.setItem(storageKey, JSON.stringify(records)); } catch { notify('Local storage is unavailable.', 'error'); } };
 let records = safeLoad();
 let supabase = null, user = null, familyMember = false, familyName = null;
+let memberships = [], selectedFamilyId = null, cloudChallengeFamilyId = null;
+const familyStorageKey = 'race24-selected-family';
 let cloudBest = [];
 let cloudChallengeId = null;
 let cloudEligible = false;
@@ -33,6 +35,7 @@ function stopClock() { running = false; cancelAnimationFrame(raf); return Math.r
 function beginClock() { stoppedMs = 0; clockStart = performance.now(); running = true; cancelAnimationFrame(raf); drawClock(); }
 function setSelection(a = null, b = null) { selected = { a, b }; updateSelection(); }
 function updateSelection() {
+  if (selected.a === null || selected.b === null) closeQuickOperations();
   for (const tile of document.querySelectorAll('.number-tile')) tile.classList.toggle('selected', tile.dataset.tileId === String(selected.a) || tile.dataset.tileId === String(selected.b));
   for (const slot of ['a', 'b']) {
     const tile = tiles.find(t => t.id === selected[slot]);
@@ -102,21 +105,70 @@ function renderTiles() {
   $('undoBtn').disabled = !history.length || finished;
   $('clearBtn').disabled = !tiles.length;
 }
+const operationSymbol = op => op === '*' ? '×' : op === '/' ? '÷' : op === 'root' ? '√ₙ' : op;
+
+function closeQuickOperations() {
+  $('quickOperations').classList.add('hidden');
+}
+function clearInteraction() {
+  operation = null;
+  closeQuickOperations();
+  setSelection();
+}
+function openQuickOperations(anchor = null) {
+  const first = tiles.find(t => t.id === selected.a);
+  const second = tiles.find(t => t.id === selected.b);
+  if (!first || !second || finished || !running) return;
+  const menu = $('quickOperations');
+  $('quickEquation').textContent = `${formatR(first.value)}  ?  ${formatR(second.value)}`;
+  menu.classList.remove('hidden');
+  // Place the picker close to the second card/drop point, within the viewport.
+  const secondCard = document.querySelector(`[data-tile-id="${second.id}"]`);
+  const bounds = secondCard?.getBoundingClientRect();
+  const x = anchor?.x ?? (bounds ? bounds.left + bounds.width / 2 : window.innerWidth / 2);
+  const y = anchor?.y ?? (bounds ? bounds.bottom : window.innerHeight / 2);
+  const size = menu.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.max(margin, Math.min(x - size.width / 2, window.innerWidth - size.width - margin));
+  let top = y + 12;
+  if (top + size.height > window.innerHeight - margin) {
+    const above = (bounds?.top ?? y) - size.height - 12;
+    top = above >= margin ? above : Math.max(margin, window.innerHeight - size.height - margin);
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+function chooseOperation(op) {
+  if (!running || finished) return;
+  // After a pair is selected, any operation executes it immediately.
+  if (selected.a !== null && selected.b !== null) operation = op;
+  else operation = operation === op ? null : op; // Tap again to deselect.
+  closeQuickOperations();
+  updateSelection();
+  maybeCombine();
+}
 function renderOperations() {
   const container = $('operations'); container.replaceChildren();
+  const quick = $('quickOperationButtons'); quick.replaceChildren();
   for (const op of Object.keys(OPERATIONS)) {
-    const el = document.createElement('button'); el.type = 'button'; el.className = 'op-button'; el.dataset.op = op;
-    el.textContent = op === '*' ? '×' : op === '/' ? '÷' : op === 'root' ? '√ₙ' : op;
-    el.title = op === 'log' ? 'log of first, base second' : op === 'root' ? 'root of first, degree second' : op;
-    el.addEventListener('click', () => { if (!running || finished) return; operation = op; updateSelection(); maybeCombine(); });
+    const label = operationSymbol(op);
+    const title = op === 'log' ? 'Log of first, base second' : op === 'root' ? 'Root of first, degree second' : op;
+    const el = document.createElement('button'); el.type = 'button';
+    el.className = 'op-button'; el.dataset.op = op; el.textContent = label; el.title = title;
+    el.addEventListener('click', () => chooseOperation(op));
     container.append(el);
+    const small = document.createElement('button'); small.type = 'button';
+    small.className = 'quick-op'; small.dataset.op = op; small.textContent = label; small.title = title;
+    small.setAttribute('aria-label', `Apply ${title}`);
+    small.addEventListener('click', () => chooseOperation(op));
+    quick.append(small);
   }
 }
 function pickTile(id) {
   if (!running || finished) return;
-  if (selected.a === id) { setSelection(null, selected.b); return; }
-  if (selected.b === id) { setSelection(selected.a, null); return; }
-  if (selected.a === null) setSelection(id, selected.b);
+  if (selected.a === id) setSelection(null, selected.b);
+  else if (selected.b === id) setSelection(selected.a, null);
+  else if (selected.a === null) setSelection(id, selected.b);
   else if (selected.b === null) setSelection(selected.a, id);
   else setSelection(id, null);
   maybeCombine();
@@ -128,24 +180,32 @@ function chooseSlot(slot, id) {
   if (selected[other] === id) selected[other] = null;
   updateSelection(); maybeCombine();
 }
-function maybeCombine() {
-  if (!running || operation === null || selected.a === null || selected.b === null || selected.a === selected.b) return;
+function maybeCombine(anchor = null) {
+  if (!running || selected.a === null || selected.b === null || selected.a === selected.b) return;
   const a = tiles.find(t => t.id === selected.a), b = tiles.find(t => t.id === selected.b);
   if (!a || !b) return;
+  if (operation === null) {
+    openQuickOperations(anchor);
+    return;
+  }
+  const applied = operation;
   try {
-    const result = combine(a, operation, b, nextId++);
+    const result = combine(a, applied, b, nextId);
+    nextId++;
     history.push(tiles.map(t => ({ ...t })));
     tiles = tiles.filter(t => t.id !== a.id && t.id !== b.id).concat(result);
-    setSelection();
+    clearInteraction(); // Always start the next calculation with no operation selected.
     renderTiles();
-    notify(`${a.text} ${operation} ${b.text} = ${formatR(result.value)} · ${tiles.length} tile${tiles.length === 1 ? '' : 's'} remaining`);
+    notify(`${a.text} ${applied} ${b.text} = ${formatR(result.value)} · ${tiles.length} tile${tiles.length === 1 ? '' : 's'} remaining`);
     if (tiles.length === 1) {
       if (equalR(tiles[0].value, rational(TARGET))) void completed();
       else notify(`You got ${formatR(tiles[0].value)}, not 24. Tap Undo and try another route.`, 'error');
     }
   } catch (error) {
-    notify(error.message || 'Invalid operation.', 'error');
-    setSelection();
+    operation = null;
+    updateSelection();
+    openQuickOperations(anchor); // Keep the pair, so an invalid operation is easy to retry.
+    notify(error.message || 'Invalid operation. Try a different one.', 'error');
   }
 }
 function toggleAce(id) {
@@ -182,7 +242,7 @@ function attachDrag(element, id) {
     const slot = target?.closest('[data-slot]')?.dataset.slot;
     const other = target?.closest('[data-tile-id]')?.dataset.tileId;
     if (slot) chooseSlot(slot, id);
-    else if (other && Number(other) !== id) { setSelection(id, Number(other)); maybeCombine(); }
+    else if (other && Number(other) !== id) { setSelection(id, Number(other)); maybeCombine({ x: e.clientX, y: e.clientY }); }
   });
   element.addEventListener('pointercancel', () => { drag?.ghost?.remove(); drag = null; });
 }
@@ -201,15 +261,17 @@ function updateRecords(key, difficulty, ms) {
 }
 function renderStats() {
   const rows = Object.entries(records).filter(([, r]) => Number.isFinite(r.bestMs));
-  const cloudRows = (cloudBest || []).map(r => ({ key: r.hand_key, bestMs: r.best_time_ms, difficulty: r.difficulty }));
-  const merged = new Map(rows.map(([key, r]) => [key, { ...r, key }]));
+  const cloudRows = (cloudBest || []).map(r => ({ key: r.hand_key, bestMs: r.best_time_ms, difficulty: r.difficulty, updatedAt: r.updatedAt }));
+  // When signed in, family records show only verified runs for the selected
+  // family. Local guest scores are never treated as another family's best.
+  const merged = new Map(familyMember ? [] : rows.map(([key, r]) => [key, { ...r, key }]));
   for (const r of cloudRows) { const prev = merged.get(r.key); if (!prev || r.bestMs < prev.bestMs) merged.set(r.key, r); }
   $('bestGrid').innerHTML = DIFFICULTIES.map(d => {
     const min = [...merged.values()].filter(r => r.difficulty === d).reduce((m, r) => Math.min(m, r.bestMs), Infinity);
     return `<div class="best-box"><div class="best-name"><span class="tier-dot ${d}"></span>${d}</div><div class="best-time">${Number.isFinite(min) ? escapeHtml((min / 1000).toFixed(2)) : '—'} <span>${Number.isFinite(min) ? 'sec' : ''}</span></div></div>`;
   }).join('');
   $('solvedCount').textContent = `${rows.reduce((n, [, r]) => n + (r.attempts || 0), 0)} hands solved locally`;
-  $('recordCount').textContent = `${merged.size} unique combinations`;
+  $('recordCount').textContent = `${merged.size} unique combinations ${familyMember ? 'in this family' : 'locally'}`;
   const historyRows = [...merged.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 6);
   $('history').innerHTML = historyRows.length ? historyRows.map(r => `<div class="history-row"><span class="history-key">${escapeHtml(r.key)}</span><span class="history-tier">${escapeHtml(r.difficulty)}</span><span class="history-time">${fmt(r.bestMs)}</span></div>`).join('') : '<p class="empty-note">Your fastest results will appear here after your first solved hand.</p>';
 }
@@ -226,10 +288,12 @@ async function completed() {
   const personalBest = updateRecords(analysis.key, analysis.difficulty, ms);
   notify('24! You solved it. ✨', 'success');
   renderTiles();
-  showResult(personalBest ? 'New personal best!' : 'Nicely solved!', ms, cloudEligible ? 'Verifying global submission…' : 'Saved locally — sign in for global rankings.');
+  showResult(personalBest ? 'New personal best!' : 'Nicely solved!', ms, cloudEligible ? 'Verifying global submission…' : 'Saved on this device.');
   if (cloudEligible && supabase && cloudChallengeId) {
     try {
-      const { data, error } = await supabase.functions.invoke('solo', { body: { action: 'submit', challengeId: cloudChallengeId, expression: tiles[0].expr } });
+      const { data, error } = await supabase.functions.invoke('solo', { body: {
+        action: 'submit', familyId: cloudChallengeFamilyId, challengeId: cloudChallengeId, expression: tiles[0].expr,
+      } });
       if (error || !data?.ok) throw Error(data?.error || error?.message || 'Submission failed');
       showResult(personalBest ? 'New personal best!' : 'Nicely solved!', ms, `Verified global time: ${fmt(data.timeMs)}${data.newBest ? ' · Global personal best!' : ''}`);
       await Promise.all([loadCloudBests(), loadLeaderboard()]);
@@ -246,13 +310,15 @@ async function newHand() {
   notify('Preparing a solvable hand…');
   await new Promise(resolve => setTimeout(resolve, 20));
   try {
-    cloudChallengeId = null; cloudEligible = false;
+    cloudChallengeId = null; cloudChallengeFamilyId = null; cloudEligible = false;
     let newCards = null, report = null;
-    if (user && supabase && familyMember) {
+    if (user && supabase && familyMember && selectedFamilyId) {
       try {
-        const { data, error } = await supabase.functions.invoke('solo', { body: { action: 'start' } });
+        const challengeFamily = selectedFamilyId;
+        const { data, error } = await supabase.functions.invoke('solo', { body: { action: 'start', familyId: challengeFamily } });
         if (error || !data?.cards || !data?.challengeId) throw Error(error?.message || 'Could not begin verified run');
-        newCards = data.cards; cloudChallengeId = data.challengeId; cloudEligible = true;
+        newCards = data.cards; cloudChallengeId = data.challengeId;
+        cloudChallengeFamilyId = challengeFamily; cloudEligible = true;
         report = data.difficulty && data.handKey
           ? { key: data.handKey, difficulty: data.difficulty, score: data.score, solvable: true }
           : analyzeHand(newCards);
@@ -266,7 +332,8 @@ async function newHand() {
       if (!report?.solvable) { newCards = [{ rank: 'A', suit: '♠' }, { rank: '3', suit: '♥' }, { rank: '8', suit: '♦' }, { rank: '2', suit: '♣' }]; report = analyzeHand(newCards); }
     }
     cards = newCards; analysis = report; nextId = 4;
-    tiles = cards.map((card, index) => leaf(card, index)); history = []; selected = { a: null, b: null }; operation = null;
+    tiles = cards.map((card, index) => leaf(card, index)); history = [];
+    clearInteraction();
     round++;
     $('roundText').textContent = `Round ${String(round).padStart(2, '0')}`;
     $('handKeyChip').textContent = canonicalKey(cards);
@@ -279,7 +346,7 @@ async function newHand() {
 }
 function undo() {
   if (!running || !history.length || finished) return;
-  tiles = history.pop(); setSelection(); renderTiles(); notify('Last step undone.');
+  tiles = history.pop(); clearInteraction(); renderTiles(); notify('Last step undone.');
 }
 function changeDifficulty(d) { selectedDifficulty = d; renderLeaderTabs(); void loadLeaderboard(); }
 function renderLeaderTabs() {
@@ -287,7 +354,7 @@ function renderLeaderTabs() {
   $('leaderTabs').querySelectorAll('button').forEach(button => button.addEventListener('click', () => changeDifficulty(button.dataset.difficulty)));
 }
 async function invoke(name, payload) {
-  if (!supabase) throw new Error('Supabase is not configured. See START_HERE.md.');
+  if (!supabase) throw new Error('Online play isn’t available yet.');
   const { data, error } = await supabase.functions.invoke(name, { body: payload });
   if (error) {
     let reason = error.message || 'Request failed';
@@ -298,15 +365,16 @@ async function invoke(name, payload) {
   return data;
 }
 async function loadLeaderboard() {
-  if (!supabase || !user || !familyMember) {
+  if (!supabase || !user || !familyMember || !selectedFamilyId) {
     $('leaderboard').innerHTML = '<div class="empty-note">Join your family to see its private rankings. Solo guest play works without an account.</div>';
     return;
   }
   const category = selectedDifficulty;
+  const familyId = selectedFamilyId;
   $('leaderboard').innerHTML = '<div class="empty-note">Loading leaderboard…</div>';
   try {
-    const { rows = [] } = await invoke('solo', { action: 'leaderboard', difficulty: category });
-    if (selectedDifficulty !== category) return;
+    const { rows = [] } = await invoke('solo', { action: 'leaderboard', difficulty: category, familyId });
+    if (selectedDifficulty !== category || selectedFamilyId !== familyId) return;
     $('leaderboard').innerHTML = rows.length
       ? rows.map((r, i) => `<div class="leader-row"><span class="leader-rank">${String(i + 1).padStart(2, '0')}</span><span class="leader-name">${escapeHtml(r.display_name)}</span><span class="leader-ms">${fmt(r.best_time_ms)}</span></div>`).join('')
       : '<div class="empty-note">No verified records yet. Claim the first spot!</div>';
@@ -315,17 +383,18 @@ async function loadLeaderboard() {
   }
 }
 async function loadCloudBests() {
-  if (!supabase || !user || !familyMember) { cloudBest = []; renderStats(); return; }
+  if (!supabase || !user || !familyMember || !selectedFamilyId) { cloudBest = []; renderStats(); return; }
   try {
-    const { records: list = [] } = await invoke('solo', { action: 'bests' });
-    cloudBest = list.map(r => ({ hand_key: r.hand_key, difficulty: r.difficulty, best_time_ms: r.best_time_ms }));
+    const familyId = selectedFamilyId;
+    const { records: list = [] } = await invoke('solo', { action: 'bests', familyId });
+    if (selectedFamilyId !== familyId) return;
+    cloudBest = list.map(r => ({ hand_key: r.hand_key, difficulty: r.difficulty, best_time_ms: r.best_time_ms, updatedAt: Date.parse(r.updated_at || '') || 0 }));
   } catch (error) { cloudBest = []; console.warn('Could not read cloud records:', error.message); }
   renderStats();
 }
 async function connectCloud() {
   if (!config.supabaseUrl || !config.supabaseKey) {
     $('onlinePill').textContent = 'Guest mode';
-    $('cloudUnavailable').classList.remove('hidden');
     return;
   }
   try {
@@ -335,33 +404,68 @@ async function connectCloud() {
     await setUser(session?.user || null);
     supabase.auth.onAuthStateChange((_event, session) => { setTimeout(() => void setUser(session?.user || null), 0); });
     await loadLeaderboard();
-  } catch (error) { notify('Could not connect to Supabase; guest play still works.', 'error'); }
+  } catch (error) { notify('Online rankings are unavailable right now.', 'error'); }
 }
-async function setUser(nextUser) {
+async function setUser(nextUser, preferredFamilyId = null) {
   user = nextUser;
-  familyMember = false;
-  familyName = null;
-  let nickname = null;
+  let current = [];
   if (user && supabase) {
     try {
       const status = await invoke('family', { action: 'status' });
-      familyMember = !!status.joined;
-      familyName = status.familyName;
-      nickname = status.nickname;
-      $('setupFields').classList.toggle('hidden', !!status.configured);
+      current = status.memberships || [];
     } catch (error) { $('authMessage').textContent = error.message; }
   }
+  memberships = current;
+  const validIds = new Set(memberships.map(m => m.familyId));
+  let stored = null;
+  try { stored = localStorage.getItem(familyStorageKey); } catch { /* optional */ }
+  selectedFamilyId = [preferredFamilyId, selectedFamilyId, stored, memberships[0]?.familyId]
+    .find(id => validIds.has(id)) || null;
+  familyMember = !!selectedFamilyId;
+  if (selectedFamilyId) {
+    try { localStorage.setItem(familyStorageKey, selectedFamilyId); } catch { /* optional */ }
+  }
+  const currentFamily = memberships.find(m => m.familyId === selectedFamilyId);
+  familyName = currentFamily?.familyName || null;
+  const nickname = currentFamily?.nickname || null;
+
   $('accountBtn').textContent = familyMember ? nickname : 'Join family';
   $('onlinePill').classList.toggle('connected', familyMember);
   $('onlinePill').innerHTML = `<span class="status-dot"></span>${familyMember ? 'Family connected' : 'Guest mode'}`;
-  $('accountFields').classList.toggle('hidden', familyMember);
+  $('familyPicker').classList.toggle('hidden', !familyMember);
+  $('familySelect').replaceChildren();
+  for (const membership of memberships) {
+    const option = document.createElement('option');
+    option.value = membership.familyId;
+    option.textContent = membership.familyName;
+    $('familySelect').append(option);
+  }
+  if (selectedFamilyId) $('familySelect').value = selectedFamilyId;
+  $('joinHeading').textContent = familyMember ? 'Join another family' : 'Join a family';
+  // Joining another group does not require creating a second player identity.
+  $('accountFields').classList.remove('hidden');
+  $('recoverFields').classList.toggle('hidden', familyMember);
   $('signedInFields').classList.toggle('hidden', !familyMember);
   $('nameInput').value = nickname || '';
-  $('accountStatus').textContent = familyMember ? `Playing as ${nickname} in ${familyName}` : '';
+  $('recordSource').textContent = familyMember ? 'Verified in this family' : 'Saved on this device';
+  $('accountStatus').textContent = familyMember
+    ? `Playing as ${nickname} in ${familyName}. You belong to ${memberships.length} ${memberships.length === 1 ? 'family' : 'families'}.`
+    : '';
+  cloudBest = [];
+  renderStats();
   await Promise.all([loadCloudBests(), loadLeaderboard()]);
 }
+function selectFamily(familyId) {
+  if (!memberships.some(m => m.familyId === familyId) || familyId === selectedFamilyId) return;
+  selectedFamilyId = familyId;
+  try { localStorage.setItem(familyStorageKey, familyId); } catch { /* optional */ }
+  // A previously started hand remains linked to its original family. Do not
+  // silently submit it to the newly selected family's leaderboard.
+  void setUser(user, familyId);
+  notify('Family switched. Deal new cards to start a time trial for this family.');
+}
 async function ensureAnonymousSession() {
-  if (!supabase) throw new Error('Supabase is not configured yet.');
+  if (!supabase) throw new Error('Online play isn’t available yet.');
   const { data: { session } } = await supabase.auth.getSession();
   if (session) { user = session.user; return; }
   const { data, error } = await supabase.auth.signInAnonymously();
@@ -382,17 +486,17 @@ async function familyAction(action, payload, buttonId, successText) {
     await ensureAnonymousSession();
     const result = await invoke('family', { action, ...payload });
     if (result.inviteCode && result.adminKey) showKey('SAVE BOTH FAMILY KEYS',
-      'The FAM code is for joining. Keep the ADM code private: it controls rotation. Both are shown only now.',
+      `Keys for ${result.familyName || 'your new family'}. Share FAM with members; keep ADM private. Both are shown only now.`,
       `Family invitation: ${result.inviteCode}\nFamily admin key: ${result.adminKey}`);
     else if (result.recoveryKey) showKey('SAVE YOUR PERSONAL RECOVERY KEY',
       'Copy this somewhere private. It restores your nickname and records if you lose browser data. It is shown only now.', result.recoveryKey);
     else if (result.inviteCode) showKey('NEW FAMILY INVITATION CODE',
-      'Share this with your family. Old codes stop working immediately; existing members and rankings are unchanged.', result.inviteCode);
+      `New invitation for ${result.familyName || 'this family'}. Old codes stop working; existing records are unchanged.`, result.inviteCode);
     else if (result.adminKey) showKey('SAVE THE FAMILY ADMIN RECOVERY KEY',
-      'Keep this secret separately from invitation codes. It is required to rotate codes and is shown only now.', result.adminKey);
+      `New admin key for ${result.familyName || 'this family'}. Save it privately; the previous admin key is invalid.`, result.adminKey);
     $('authMessage').textContent = successText;
-    if (['join','recover','rename'].includes(action)) await setUser(user);
-    if (action === 'bootstrap') $('setupFields').classList.add('hidden');
+    if (['join','recover','rename'].includes(action)) await setUser(user, result.familyId || selectedFamilyId);
+    if (action === 'bootstrap') { $('setupSecretInput').value = ''; $('familyNameInput').value = ''; }
     if (action === 'rotate-invite') $('adminKeyInput').value = '';
     if (action === 'rotate-admin') $('adminKeyInput').value = '';
   } catch (error) {
@@ -415,28 +519,36 @@ function initialTheme() {
 function wire() {
   $('newHandBtn').addEventListener('click', newHand);
   $('undoBtn').addEventListener('click', undo);
-  $('clearBtn').addEventListener('click', () => { setSelection(); notify('Selection cleared.'); });
+  $('clearBtn').addEventListener('click', () => { clearInteraction(); notify('Selection cleared.'); });
+  $('closeQuickBtn').addEventListener('click', clearInteraction);
+  $('swapQuickBtn').addEventListener('click', () => {
+    if (selected.a === null || selected.b === null) return;
+    [selected.a, selected.b] = [selected.b, selected.a];
+    updateSelection();
+    openQuickOperations();
+  });
   $('multiSoon').addEventListener('click', () => notify('Multiplayer rooms are planned. The exact math engine is already shared.'));
   $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('accountBtn').addEventListener('click', () => $('accountDialog').showModal());
+  $('familySelect').addEventListener('change', e => selectFamily(e.target.value));
   $('closeAccountBtn').addEventListener('click', () => $('accountDialog').close());
   $('familyJoinBtn').addEventListener('click', () => familyAction('join', {
     nickname: $('nicknameInput').value, inviteCode: $('familyCodeInput').value,
-  }, 'familyJoinBtn', 'Welcome to your family leaderboard!'));
+  }, 'familyJoinBtn', 'Welcome! Your family is ready to play.'));
   $('recoverBtn').addEventListener('click', () => familyAction('recover', {
     recoveryKey: $('recoverInput').value,
-  }, 'recoverBtn', 'Your original identity and records are restored.'));
+  }, 'recoverBtn', 'Your families and records are restored.'));
   $('saveNameBtn').addEventListener('click', () => familyAction('rename', {
-    nickname: $('nameInput').value,
+    nickname: $('nameInput').value, familyId: selectedFamilyId,
   }, 'saveNameBtn', 'Nickname updated.'));
   $('newRecoveryBtn').addEventListener('click', () => familyAction('rotate-recovery', {},
     'newRecoveryBtn', 'New recovery key created. Previous key no longer works.'));
   $('setupFamilyBtn').addEventListener('click', () => familyAction('bootstrap', {
     setupSecret: $('setupSecretInput').value, familyName: $('familyNameInput').value,
-  }, 'setupFamilyBtn', 'Family created. Save both the invitation code and the admin recovery key (shown one at a time).'));
+  }, 'setupFamilyBtn', 'Family created. Save both new keys before closing this window.'));
   $('rotateInviteBtn').addEventListener('click', () => familyAction('rotate-invite', {
     adminKey: $('adminKeyInput').value,
-  }, 'rotateInviteBtn', 'Invitation code changed; leaderboard unchanged.'));
+  }, 'rotateInviteBtn', 'Invitation code rotated; this family’s records are unchanged.'));
   $('rotateAdminBtn').addEventListener('click', () => familyAction('rotate-admin', {
     adminKey: $('adminKeyInput').value,
   }, 'rotateAdminBtn', 'Admin key replaced; save the new key.'));
@@ -445,7 +557,7 @@ function wire() {
     catch { $('authMessage').textContent = 'Please select and manually copy the key above.'; }
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !$('accountDialog').open) setSelection();
+    if (e.key === 'Escape' && !$('accountDialog').open) clearInteraction();
     if (e.key === 'Backspace' && !$('accountDialog').open) { e.preventDefault(); undo(); }
   });
 }

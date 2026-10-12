@@ -37,19 +37,24 @@
           <div id="tiles" class="tiles" aria-label="Number tiles"></div>
           <div class="tools-heading"><span>OPERATIONS</span><span class="muted">Tap or drag to combine</span></div>
           <div id="operations" class="operations" aria-label="Math operations"></div>
+          <div id="quickOperations" class="quick-operations hidden" role="group" aria-label="Choose an operation for the selected cards">
+            <div class="quick-head"><span class="quick-title">COMBINE CARDS</span><button type="button" id="closeQuickBtn" class="quick-close" aria-label="Cancel selection">✕</button></div>
+            <div class="quick-pair"><span id="quickEquation"></span><button type="button" id="swapQuickBtn" class="quick-swap" title="Swap first and second operands" aria-label="Swap number order">⇄ Swap</button></div>
+            <div id="quickOperationButtons" class="quick-buttons" aria-label="Available math operations"></div>
+          </div>
           <div class="combine-zone" id="combineZone"><div class="operand-target" data-slot="a"><span class="operand-title">FIRST NUMBER</span><strong id="slotA">Tap or drop</strong></div><div class="op-display" id="opDisplay">?</div><div class="operand-target" data-slot="b"><span class="operand-title">SECOND NUMBER</span><strong id="slotB">Tap or drop</strong></div></div>
-          <p class="microcopy">Tip: tap <b>number → operation → number</b>, or select an operation and drag one tile onto another. For <b>log</b>, the second tile is the base. For <b>root</b>, it is the degree.</p>
+          <p class="microcopy">Tap two cards or drag one onto another to choose an operation. You can also pick an operation first. Every move resets the operation. For <b>log</b>, the second number is the base; for <b>root</b>, it is the degree.</p>
           <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button primary" id="newHandBtn" type="button">Deal cards <span>↗</span></button></div>
           <div id="result" class="result hidden" role="status" aria-live="polite"></div>
         </section>
 
         <aside class="side-col">
           <section class="panel stat-panel"><div class="side-heading"><div><div class="kicker">YOUR PROGRESS</div><h2>Personal bests</h2></div><span class="side-symbol">↗</span></div><div class="best-grid" id="bestGrid"></div><div class="stat-footer"><span id="solvedCount">0 hands solved</span><span id="recordCount">0 combinations</span></div></section>
-          <section class="panel leaderboard-panel"><div class="side-heading"><div><div class="kicker">COMMUNITY</div><h2>Global leaderboard</h2></div><span class="side-symbol">♛</span></div><div class="leader-tabs" id="leaderTabs"></div><div id="leaderboard" class="leaderboard-list"><div class="empty-note">Connect Supabase to view online records.</div></div><div class="leader-footer">Fastest personal record within each difficulty group <span>↗</span></div></section>
+          <section class="panel leaderboard-panel"><div class="side-heading"><div><div class="kicker">COMMUNITY</div><h2>Family leaderboard</h2></div><span class="side-symbol">♛</span></div><div class="family-picker hidden" id="familyPicker"><label for="familySelect">Family leaderboard</label><select id="familySelect" aria-label="Choose family leaderboard"></select></div><div class="leader-tabs" id="leaderTabs"></div><div id="leaderboard" class="leaderboard-list"><div class="empty-note">No family records to show yet.</div></div><div class="leader-footer">Fastest personal record within each difficulty group <span>↗</span></div></section>
         </aside>
       </div>
 
-      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is an initial mathematical estimate, revealed after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
+      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted" id="recordSource">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is an initial mathematical estimate, revealed after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
     </main>
     <footer class="footer"><span>RACE24 / a tiny card puzzle</span><span>Solo live · Multiplayer-ready core</span></footer>
   </div>
@@ -57,22 +62,22 @@
   <dialog id="accountDialog" class="modal">
     <div class="modal-content">
       <button class="close-btn" aria-label="Close dialog" id="closeAccountBtn" type="button">✕</button>
-      <div class="kicker">FAMILY / CLOUD RECORDS</div>
-      <h2>No email. No password.</h2>
-      <p class="muted">Solo works without an account. Join once to save verified times on the family leaderboard. Save your personal recovery key somewhere safe.</p>
-      <div id="cloudUnavailable" class="form-note hidden">Supabase isn't connected. Guest play and local bests still work.</div>
+      <div class="kicker">PLAYER PROFILE</div>
+      <h2>Family leaderboard</h2>
       <section id="accountFields" class="account-section">
-        <h3>Join your family</h3>
+        <h3 id="joinHeading">Join a family</h3>
         <label for="nicknameInput">Nickname</label>
         <input id="nicknameInput" maxlength="24" placeholder="e.g. Alex" autocomplete="nickname" />
         <label for="familyCodeInput">Family invitation code</label>
         <input id="familyCodeInput" placeholder="FAM-..." autocomplete="off" />
         <button id="familyJoinBtn" class="button primary wide" type="button">Join family</button>
-        <h3>Already played before?</h3>
-        <p class="muted">Restore your existing leaderboard records using your personal recovery key—even if the invitation code has changed.</p>
-        <label for="recoverInput">Personal recovery key</label>
-        <input id="recoverInput" placeholder="REC-..." autocomplete="off" />
-        <button id="recoverBtn" class="button ghost wide" type="button">Recover my records</button>
+        <div id="recoverFields">
+          <h3>Already played before?</h3>
+          <p class="muted">Use your recovery key to restore all your family memberships and records.</p>
+          <label for="recoverInput">Personal recovery key</label>
+          <input id="recoverInput" placeholder="REC-..." autocomplete="off" />
+          <button id="recoverBtn" class="button ghost wide" type="button">Recover my records</button>
+        </div>
       </section>
       <section id="signedInFields" class="account-section hidden">
         <p class="form-note" id="accountStatus"></p>
@@ -91,15 +96,15 @@
       <div id="authMessage" class="form-note" role="status" aria-live="polite"></div>
       <details id="organizerTools" class="organizer-tools">
         <summary>Family organizer tools</summary>
-        <p class="muted">Create the family once, or rotate its invitation code without losing members or leaderboard records.</p>
+        <p class="muted">Create another family, or change an existing family’s invitation code. Each family has its own admin key.</p>
         <div id="setupFields">
-          <label for="familyNameInput">Family name (first setup only)</label>
+          <label for="familyNameInput">New family name</label>
           <input id="familyNameInput" placeholder="e.g. The Math Club" />
           <label for="setupSecretInput">Server setup secret</label>
-          <input id="setupSecretInput" type="password" autocomplete="off" placeholder="From Supabase Edge Function secrets" />
-          <button class="button ghost wide" id="setupFamilyBtn" type="button">Set up family</button>
+          <input id="setupSecretInput" type="password" autocomplete="off" placeholder="Enter your setup secret" />
+          <button class="button ghost wide" id="setupFamilyBtn" type="button">Create family</button>
         </div>
-        <label for="adminKeyInput">Family admin recovery key</label>
+        <label for="adminKeyInput">Admin key of the family you want to manage</label>
         <input id="adminKeyInput" type="password" autocomplete="off" placeholder="ADM-..." />
         <button class="button ghost wide" id="rotateInviteBtn" type="button">Generate new invitation code</button>
         <button class="button ghost wide" id="rotateAdminBtn" type="button">Replace admin recovery key</button>
