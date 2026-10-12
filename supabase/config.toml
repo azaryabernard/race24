@@ -1,0 +1,5 @@
+[functions.solo]
+verify_jwt = true
+
+[functions.family]
+verify_jwt = true

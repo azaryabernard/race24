@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c1321" id="themeMeta" />
+  <meta name="description" content="24 Race: solve four cards with exact maths as fast as you can." />
+  <title>24 Race — Math, but faster</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="24 Race home"><span class="brand-mark">24<span class="brand-flash">✦</span></span><span>RACE</span></a>
+      <nav class="nav-tabs" aria-label="Game modes"><button class="nav-tab active" type="button">Solo trial</button><button class="nav-tab" id="multiSoon" type="button">Multiplayer <span class="soon">soon</span></button></nav>
+      <div class="top-actions"><button class="button subtle small theme-toggle" id="themeBtn" type="button" aria-label="Switch to light mode">☀ Light</button><span class="online-pill" id="onlinePill"><span class="status-dot"></span>Guest mode</span><button class="button subtle small" id="accountBtn" type="button">Join family</button></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div><span class="eyebrow">THINK FAST · MAKE 24</span><h1>Four cards. <em>One number.</em></h1><p>Combine every card exactly once. Beat your time, master every combination, and climb the ranks.</p></div>
+        <div class="hero-ornament" aria-hidden="true">24<span>✳</span></div>
+      </section>
+
+      <div class="main-grid">
+        <section class="play-panel panel" aria-labelledby="playTitle">
+          <div class="panel-heading"><div><div class="kicker">SOLO / TIME TRIAL</div><h2 id="playTitle">The arena</h2></div><div class="timer-wrap"><span class="timer-label">YOUR TIME</span><strong class="timer" id="timer">00:00.00</strong></div></div>
+          <div class="arena-meta"><span id="roundText">Round 01</span><span class="chip" id="handKeyChip">Ready for a hand</span><span class="chip hidden" id="difficultyChip"></span></div>
+          <div id="banner" class="banner" role="status" aria-live="polite">Press “New hand” to start the clock.</div>
+          <div id="tiles" class="tiles" aria-label="Number tiles"></div>
+          <div class="tools-heading"><span>OPERATIONS</span><span class="muted">Tap or drag to combine</span></div>
+          <div id="operations" class="operations" aria-label="Math operations"></div>
+          <div class="combine-zone" id="combineZone"><div class="operand-target" data-slot="a"><span class="operand-title">FIRST NUMBER</span><strong id="slotA">Tap or drop</strong></div><div class="op-display" id="opDisplay">?</div><div class="operand-target" data-slot="b"><span class="operand-title">SECOND NUMBER</span><strong id="slotB">Tap or drop</strong></div></div>
+          <p class="microcopy">Tip: tap <b>number → operation → number</b>, or select an operation and drag one tile onto another. For <b>log</b>, the second tile is the base. For <b>root</b>, it is the degree.</p>
+          <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button primary" id="newHandBtn" type="button">New hand <span>↗</span></button></div>
+          <div id="result" class="result hidden" role="status" aria-live="polite"></div>
+        </section>
+
+        <aside class="side-col">
+          <section class="panel stat-panel"><div class="side-heading"><div><div class="kicker">YOUR PROGRESS</div><h2>Personal bests</h2></div><span class="side-symbol">↗</span></div><div class="best-grid" id="bestGrid"></div><div class="stat-footer"><span id="solvedCount">0 hands solved</span><span id="recordCount">0 combinations</span></div></section>
+          <section class="panel leaderboard-panel"><div class="side-heading"><div><div class="kicker">COMMUNITY</div><h2>Global leaderboard</h2></div><span class="side-symbol">♛</span></div><div class="leader-tabs" id="leaderTabs"></div><div id="leaderboard" class="leaderboard-list"><div class="empty-note">Connect Supabase to view online records.</div></div><div class="leader-footer">Fastest personal record within each difficulty group <span>↗</span></div></section>
+        </aside>
+      </div>
+
+      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is an initial mathematical estimate, revealed after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
+    </main>
+    <footer class="footer"><span>24 RACE / made for curious minds</span><span>Solo live · Multiplayer-ready core</span></footer>
+  </div>
+
+  <dialog id="accountDialog" class="modal">
+    <div class="modal-content">
+      <button class="close-btn" aria-label="Close dialog" id="closeAccountBtn" type="button">✕</button>
+      <div class="kicker">FAMILY / CLOUD RECORDS</div>
+      <h2>No email. No password.</h2>
+      <p class="muted">Solo works without an account. Join once to save verified times on the family leaderboard. Save your personal recovery key somewhere safe.</p>
+      <div id="cloudUnavailable" class="form-note hidden">Supabase isn't connected. Guest play and local bests still work.</div>
+      <section id="accountFields" class="account-section">
+        <h3>Join your family</h3>
+        <label for="nicknameInput">Nickname</label>
+        <input id="nicknameInput" maxlength="24" placeholder="e.g. Alex" autocomplete="nickname" />
+        <label for="familyCodeInput">Family invitation code</label>
+        <input id="familyCodeInput" placeholder="FAM-..." autocomplete="off" />
+        <button id="familyJoinBtn" class="button primary wide" type="button">Join family</button>
+        <h3>Already played before?</h3>
+        <p class="muted">Restore your existing leaderboard records using your personal recovery key—even if the invitation code has changed.</p>
+        <label for="recoverInput">Personal recovery key</label>
+        <input id="recoverInput" placeholder="REC-..." autocomplete="off" />
+        <button id="recoverBtn" class="button ghost wide" type="button">Recover my records</button>
+      </section>
+      <section id="signedInFields" class="account-section hidden">
+        <p class="form-note" id="accountStatus"></p>
+        <label for="nameInput">Your nickname</label>
+        <input id="nameInput" type="text" minlength="2" maxlength="24" placeholder="Nickname" />
+        <button class="button ghost wide" id="saveNameBtn" type="button">Update nickname</button>
+        <button class="button ghost wide" id="newRecoveryBtn" type="button">Replace my recovery key</button>
+        <p class="muted">Replacing a key invalidates the previous one. It doesn't reset your records.</p>
+      </section>
+      <div id="keyResult" class="key-result hidden" role="status" aria-live="polite">
+        <strong id="keyTitle">Save this key</strong>
+        <p id="keyDescription" class="muted"></p>
+        <code id="keyValue"></code>
+        <button id="copyKeyBtn" class="button ghost wide" type="button">Copy key</button>
+      </div>
+      <div id="authMessage" class="form-note" role="status" aria-live="polite"></div>
+      <details id="organizerTools" class="organizer-tools">
+        <summary>Family organizer tools</summary>
+        <p class="muted">Create the family once, or rotate its invitation code without losing members or leaderboard records.</p>
+        <div id="setupFields">
+          <label for="familyNameInput">Family name (first setup only)</label>
+          <input id="familyNameInput" placeholder="e.g. The Math Club" />
+          <label for="setupSecretInput">Server setup secret</label>
+          <input id="setupSecretInput" type="password" autocomplete="off" placeholder="From Supabase Edge Function secrets" />
+          <button class="button ghost wide" id="setupFamilyBtn" type="button">Set up family</button>
+        </div>
+        <label for="adminKeyInput">Family admin recovery key</label>
+        <input id="adminKeyInput" type="password" autocomplete="off" placeholder="ADM-..." />
+        <button class="button ghost wide" id="rotateInviteBtn" type="button">Generate new invitation code</button>
+        <button class="button ghost wide" id="rotateAdminBtn" type="button">Replace admin recovery key</button>
+      </details>
+    </div>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
