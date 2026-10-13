@@ -7,7 +7,16 @@ import { config } from './config.js';
 const $ = id => document.getElementById(id);
 const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmt = ms => (ms / 1000).toFixed(2) + 's';
-const timerText = ms => { const secs = Math.floor(ms / 1000); return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}.${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`; };
+// Show tenths while playing, hundredths for a stopped/final time.
+// Formatting precision never affects the measured or stored milliseconds.
+const timerText = (ms, decimals = 2) => {
+  const elapsed = Math.max(0, Math.floor(ms));
+  const secs = Math.floor(elapsed / 1000);
+  const fraction = decimals === 1
+    ? String(Math.floor((elapsed % 1000) / 100))
+    : String(Math.floor((elapsed % 1000) / 10)).padStart(2, '0');
+  return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}.${fraction}`;
+};
 const storageKey = '24race-v1-records';
 // Upgrade old local records in place; preserve every original best time and
 // attempt count. The underlying math rules / storage key have not changed.
@@ -42,19 +51,34 @@ let cloudChallengeId = null;
 let cloudEligible = false;
 let cards = [], tiles = [], history = [], selected = { a: null, b: null }, operation = null;
 let round = 0, nextId = 4, analysis = null, clockStart = 0, stoppedMs = 0, running = false, finished = false;
-let selectedDifficulty = 'Easy', busy = false, suppressedClick = false;
-let raf = 0;
+let selectedDifficulty = 'Easy', busy = false;
+let clockInterval = null;
 
 function notify(message, kind = '') { $('banner').textContent = message; $('banner').className = `banner ${kind}`; }
 function drawClock() {
-  if (running) {
-    stoppedMs = Math.max(0, performance.now() - clockStart);
-    $('timer').textContent = timerText(stoppedMs);
-    raf = requestAnimationFrame(drawClock);
-  }
+  if (!running) return;
+  stoppedMs = Math.max(0, performance.now() - clockStart);
+  const visible = timerText(stoppedMs, 1);
+  // Only change the text when the displayed tenth changes.
+  if ($('timer').textContent !== visible) $('timer').textContent = visible;
 }
-function stopClock() { running = false; cancelAnimationFrame(raf); return Math.round(stoppedMs); }
-function beginClock() { stoppedMs = 0; clockStart = performance.now(); running = true; cancelAnimationFrame(raf); drawClock(); }
+function stopClock() {
+  if (running) stoppedMs = Math.max(0, performance.now() - clockStart);
+  running = false;
+  clearInterval(clockInterval);
+  clockInterval = null;
+  $('timer').textContent = timerText(stoppedMs, 2);
+  return Math.round(stoppedMs);
+}
+function beginClock() {
+  clearInterval(clockInterval);
+  stoppedMs = 0;
+  clockStart = performance.now();
+  running = true;
+  drawClock();
+  // Poll every 50ms for responsive tenths; text changes at most 10 times/sec.
+  clockInterval = setInterval(drawClock, 50);
+}
 function setSelection(a = null, b = null) { selected = { a, b }; updateSelection(); }
 function updateSelection() {
   if (selected.a === null || selected.b === null) closeQuickOperations();
@@ -119,7 +143,7 @@ function renderTiles() {
       toggle.addEventListener('click', () => toggleAce(tile.id));
       wrap.append(toggle);
     }
-    el.addEventListener('click', () => { if (suppressedClick) return; pickTile(tile.id); });
+    el.addEventListener('click', () => pickTile(tile.id));
     attachDrag(el, tile.id);
     area.append(wrap);
   }
@@ -183,7 +207,23 @@ function renderOperations() {
     const small = document.createElement('button'); small.type = 'button';
     small.className = 'quick-op'; small.dataset.op = op; small.textContent = label; small.title = title;
     small.setAttribute('aria-label', `Apply ${title}`);
-    small.addEventListener('click', () => chooseOperation(op));
+    let handledTouch = false;
+    small.addEventListener('pointerdown', () => { handledTouch = false; });
+    small.addEventListener('pointerup', e => {
+      if (e.pointerType !== 'touch') return;
+      // Act on touch release rather than waiting for Safari's synthesized
+      // click; ensure sliding a finger off a button does not activate it.
+      if (document.elementFromPoint(e.clientX, e.clientY)?.closest('.quick-op') !== small) return;
+      handledTouch = true;
+      // We already performed the touch action; ignore its later compat click
+      // even if Safari retargets it after the menu disappears.
+      ignoreDragClick = true;
+      chooseOperation(op);
+    });
+    small.addEventListener('click', e => {
+      if (handledTouch) { handledTouch = false; e.preventDefault(); return; }
+      chooseOperation(op); // Mouse, keyboard and assistive technologies.
+    });
     quick.append(small);
   }
 }
@@ -241,33 +281,74 @@ function toggleAce(id) {
   renderTiles();
   notify(`Ace is now ${next}.`);
 }
+// Safari can dispatch a compatibility click after a drag, or after a popup
+// touch action already handled on pointerup. Ignore only that trailing click,
+// never the user's following tap.
+let ignoreDragClick = false;
+document.addEventListener('pointerdown', () => { ignoreDragClick = false; }, true);
+document.addEventListener('click', e => {
+  if (!ignoreDragClick || e.detail === 0) return;
+  ignoreDragClick = false;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+
 function attachDrag(element, id) {
   let drag = null;
   element.addEventListener('pointerdown', e => {
-    if (!running || finished || e.button !== 0) return;
-    drag = { x: e.clientX, y: e.clientY, moving: false, ghost: null };
+    if (!running || finished || e.button !== 0 || !e.isPrimary) return;
+    drag = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, moving: false, ghost: null };
     element.setPointerCapture(e.pointerId);
   });
   element.addEventListener('pointermove', e => {
-    if (!drag) return;
+    if (!drag || e.pointerId !== drag.pointerId) return;
     if (!drag.moving && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 10) {
-      drag.moving = true; drag.ghost = document.createElement('div'); drag.ghost.className = 'drag-ghost';
-      drag.ghost.textContent = formatR(tiles.find(t => t.id === id)?.value || rational(0)); document.body.append(drag.ghost);
+      drag.moving = true;
+      drag.ghost = document.createElement('div');
+      drag.ghost.className = 'drag-ghost';
+      drag.ghost.textContent = formatR(tiles.find(t => t.id === id)?.value || rational(0));
+      document.body.append(drag.ghost);
     }
-    if (drag.moving) { drag.ghost.style.left = `${e.clientX}px`; drag.ghost.style.top = `${e.clientY}px`; }
+    if (drag.moving) {
+      drag.ghost.style.left = `${e.clientX}px`;
+      drag.ghost.style.top = `${e.clientY}px`;
+    }
   });
   element.addEventListener('pointerup', e => {
-    if (!drag) return;
-    const didDrag = drag.moving; drag.ghost?.remove(); drag = null;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const didDrag = drag.moving;
+    drag.ghost?.remove();
+    drag = null;
+    // Safari sometimes keeps capture until a later event. Release before
+    // introducing the popup so its next touch hits the operation button.
+    if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId);
     if (!didDrag) return;
-    suppressedClick = true; setTimeout(() => { suppressedClick = false; }, 0);
+    ignoreDragClick = true;
     const target = document.elementFromPoint(e.clientX, e.clientY);
     const slot = target?.closest('[data-slot]')?.dataset.slot;
     const other = target?.closest('[data-tile-id]')?.dataset.tileId;
     if (slot) chooseSlot(slot, id);
-    else if (other && Number(other) !== id) { setSelection(id, Number(other)); maybeCombine({ x: e.clientX, y: e.clientY }); }
+    else if (other && Number(other) !== id) {
+      const secondId = Number(other);
+      setSelection(id, secondId);
+      if (e.pointerType === 'touch') {
+        // Do not insert an interactive popup during iOS's pointerup/click
+        // synthesis. Show it on the next paint, after drag cleanup.
+        const position = { x: e.clientX, y: e.clientY };
+        requestAnimationFrame(() => {
+          if (running && !finished && selected.a === id && selected.b === secondId)
+            maybeCombine(position);
+        });
+      } else {
+        maybeCombine({ x: e.clientX, y: e.clientY });
+      }
+    }
   });
-  element.addEventListener('pointercancel', () => { drag?.ghost?.remove(); drag = null; });
+  element.addEventListener('pointercancel', e => {
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    drag.ghost?.remove();
+    drag = null;
+  });
 }
 for (const zone of document.querySelectorAll('[data-slot]')) {
   zone.addEventListener('click', () => {
