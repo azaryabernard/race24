@@ -1,5 +1,8 @@
 [build]
-  command = "npm run build"
+  # Optional one-time deploy of the Supabase multiplayer Edge Function.
+  # Enable in Netlify UI: DEPLOY_MULTIPLAYER=true (production only).
+  # SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF must also be set privately in Netlify.
+  command = 'npm run build && if [ "$CONTEXT" = "production" ] && [ "$DEPLOY_MULTIPLAYER" = "true" ]; then if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then echo "Missing Supabase deployment variables" >&2; exit 1; fi; npx --yes supabase@2 functions deploy multiplayer --project-ref "$SUPABASE_PROJECT_REF" --use-api; fi'
   publish = "dist"
 
 [build.environment]
