@@ -32,6 +32,7 @@
       <div class="main-grid">
         <section class="play-panel panel" aria-labelledby="playTitle">
           <div class="panel-heading"><div><div class="kicker">SOLO // TIME TRIAL</div><h2 id="playTitle">Your hand</h2></div><div class="timer-wrap"><span class="timer-label">YOUR TIME</span><strong class="timer" id="timer">00:00.00</strong></div></div>
+          <div id="expertNotice" class="expert-notice hidden" role="note" aria-live="polite"><span class="expert-mark" aria-hidden="true">!</span><div><strong>Expert difficulty</strong><span>A tougher hand. Powers, roots, or logarithms might help, but aren't necessarily required.</span></div></div>
           <div class="arena-meta"><span id="roundText">Round 01</span><span class="chip" id="handKeyChip">Ready for a hand</span><span class="chip hidden" id="difficultyChip"></span></div>
           <div id="banner" class="banner" role="status" aria-live="polite">Press “New hand” to start the clock.</div>
           <div id="tiles" class="tiles" aria-label="Number tiles"></div>
@@ -44,8 +45,15 @@
           </div>
           <div class="combine-zone" id="combineZone"><div class="operand-target" data-slot="a"><span class="operand-title">FIRST NUMBER</span><strong id="slotA">Tap or drop</strong></div><div class="op-display" id="opDisplay">?</div><div class="operand-target" data-slot="b"><span class="operand-title">SECOND NUMBER</span><strong id="slotB">Tap or drop</strong></div></div>
           <p class="microcopy">Tap two cards or drag one onto another to choose an operation. You can also pick an operation first. Every move resets the operation. For <b>log</b>, the second number is the base; for <b>root</b>, it is the degree.</p>
-          <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button primary" id="newHandBtn" type="button">Deal cards <span>↗</span></button></div>
+          <!-- Solo-only controls: the solution reveal must not appear in future multiplayer rounds. -->
+          <div class="game-actions"><button class="button ghost" id="undoBtn" type="button">↶ Undo</button><button class="button ghost" id="clearBtn" type="button">Clear selection</button><button class="button ghost give-up-btn" id="revealSolutionBtn" type="button" disabled>Give up / Show solution</button><button class="button primary" id="newHandBtn" type="button">Deal cards <span>↗</span></button></div>
           <div id="result" class="result hidden" role="status" aria-live="polite"></div>
+          <section id="solutionReveal" class="solution-reveal hidden" aria-labelledby="solutionTitle" aria-live="polite">
+            <div class="solution-header"><span class="kicker">ROUND FORFEITED</span><h3 id="solutionTitle">One possible solution</h3></div>
+            <ol id="solutionSteps" class="solution-steps"></ol>
+            <p id="solutionNotes" class="solution-notes"></p>
+            <p class="solution-disclaimer">No personal best or leaderboard time was recorded. Deal new cards to try again.</p>
+          </section>
         </section>
 
         <aside class="side-col">
@@ -54,7 +62,7 @@
         </aside>
       </div>
 
-      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted" id="recordSource">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is an initial mathematical estimate, revealed after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
+      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted" id="recordSource">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty is a mathematical estimate. Expert hands are flagged when dealt; other ratings appear after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
     </main>
     <footer class="footer"><span>RACE24 / a tiny card puzzle</span><span>Solo live · Multiplayer-ready core</span></footer>
   </div>

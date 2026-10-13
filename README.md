@@ -17,6 +17,7 @@ Open http://localhost:4173/. Read **START_HERE.md** for step-by-step Netlify + S
 
 - Random **solvable** four-card hands with no more than two ten-valued cards; `10`, `J`, `Q`, and `K` have the same canonical value. Card order and suit don't change the hand key. Ace is `1` for identification but can be played as `1` or `11`.
 - Solo stopwatch and mobile-friendly tap/drag math tiles. Undo, clear, Ace switch; finish only after combining all four cards into exactly 24.
+- **Give up / Show solution** under the Solo controls: stops the timer, displays three exact intermediate calculations (including the chosen Ace values), and records **no personal best or online leaderboard time**. Deal cards again to restart. It is intentionally a Solo-only feature; do not make it available in future multiplayer rounds.
 - Exact arithmetic using `BigInt` fractions. Rational division is allowed, powers require integer exponents, logs/roots must return exact integers. There is a maximum exponent and a 256-bit size guard.
 - Heuristic Easy/Medium/Hard/Expert ratings based on search complexity; **not** based on AFK time.
 - Local personal records in browser storage, **light/dark mode** saved per device.

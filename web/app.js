@@ -103,7 +103,8 @@ function renderTiles() {
   }
   updateSelection();
   $('undoBtn').disabled = !history.length || finished;
-  $('clearBtn').disabled = !tiles.length;
+  $('clearBtn').disabled = !tiles.length || finished;
+  $('revealSolutionBtn').disabled = !running || finished;
 }
 const operationSymbol = op => op === '*' ? '×' : op === '/' ? '÷' : op === 'root' ? '√ₙ' : op;
 
@@ -302,11 +303,57 @@ async function completed() {
     }
   }
 }
+/** Solo-only forfeit: ending a run never writes local or server records. */
+function revealSolution() {
+  if (!running || finished || busy || !analysis || cards.length !== 4) return;
+  // The backend returns only a hand classification. Find the exact solution on
+  // demand for verified online hands, never by reading the user's partial tiles.
+  let proof;
+  try {
+    proof = analysis.solutionSteps?.length === 3 ? analysis : analyzeHand(cards);
+    if (!proof.solvable || proof.solutionSteps?.length !== 3) throw Error('No verified solution for this hand');
+  } catch (error) {
+    notify(`Could not show a solution: ${error.message}`, 'error');
+    return;
+  }
+  stopClock();
+  finished = true;
+  // Deliberately discard the client-side challenge: forfeits cannot submit a
+  // result, including when the hand came from the online family leaderboard.
+  cloudChallengeId = null;
+  cloudChallengeFamilyId = null;
+  cloudEligible = false;
+  history = [];
+  clearInteraction();
+  tiles = cards.map((card, index) => leaf(card, index));
+  renderTiles();
+  $('solutionSteps').replaceChildren();
+  for (const step of proof.solutionSteps) {
+    const item = document.createElement('li');
+    item.textContent = step;
+    $('solutionSteps').append(item);
+  }
+  const notes = [];
+  if (proof.solutionAceValues.length) {
+    notes.push(`Ace ${proof.solutionAceValues.length > 1 ? 'values' : 'value'} in this solution: ${proof.solutionAceValues.join(', ')}.`);
+  }
+  if (cards.some(card => ['J', 'Q', 'K'].includes(card.rank))) notes.push('J, Q and K each count as 10.');
+  $('solutionNotes').textContent = notes.join(' ');
+  $('solutionNotes').classList.toggle('hidden', !notes.length);
+  $('solutionReveal').classList.remove('hidden');
+  $('difficultyChip').textContent = analysis.difficulty;
+  $('difficultyChip').classList.remove('hidden');
+  $('difficultyChip').classList.add('difficulty');
+  notify('You gave up this round. No time or record was saved.', '');
+}
+
 async function newHand() {
   if (busy) return;
   busy = true; $('newHandBtn').disabled = true;
+  $('revealSolutionBtn').disabled = true;
   stopClock();
-  $('result').classList.add('hidden'); $('difficultyChip').classList.add('hidden');
+  $('result').classList.add('hidden'); $('solutionReveal').classList.add('hidden'); $('difficultyChip').classList.add('hidden');
+  $('expertNotice').classList.add('hidden');
   notify('Preparing a solvable hand…');
   await new Promise(resolve => setTimeout(resolve, 20));
   try {
@@ -332,6 +379,7 @@ async function newHand() {
       if (!report?.solvable) { newCards = [{ rank: 'A', suit: '♠' }, { rank: '3', suit: '♥' }, { rank: '8', suit: '♦' }, { rank: '2', suit: '♣' }]; report = analyzeHand(newCards); }
     }
     cards = newCards; analysis = report; nextId = 4;
+    $('expertNotice').classList.toggle('hidden', report.difficulty !== 'Expert');
     tiles = cards.map((card, index) => leaf(card, index)); history = [];
     clearInteraction();
     round++;
@@ -341,6 +389,7 @@ async function newHand() {
     renderTiles();
     notify(cloudEligible ? 'Verified time trial: solve the hand as fast as you can!' : 'Clock is running! Combine all four cards into 24.');
     beginClock();
+    $('revealSolutionBtn').disabled = false;
   } catch (error) { notify(`Could not start a hand: ${error.message}`, 'error'); }
   finally { busy = false; $('newHandBtn').disabled = false; }
 }
@@ -518,15 +567,23 @@ function initialTheme() {
 }
 function wire() {
   $('newHandBtn').addEventListener('click', newHand);
+  $('revealSolutionBtn').addEventListener('click', revealSolution);
   $('undoBtn').addEventListener('click', undo);
   $('clearBtn').addEventListener('click', () => { clearInteraction(); notify('Selection cleared.'); });
   $('closeQuickBtn').addEventListener('click', clearInteraction);
+
   $('swapQuickBtn').addEventListener('click', () => {
     if (selected.a === null || selected.b === null) return;
+    // Reverse the operands
     [selected.a, selected.b] = [selected.b, selected.a];
     updateSelection();
-    openQuickOperations();
+    // Update only the equation, not the popup position
+    const a = tiles.find(t => t.id === selected.a);
+    const b = tiles.find(t => t.id === selected.b);
+    $('quickEquation').textContent =
+      `${formatR(a.value)}  ?  ${formatR(b.value)}`;
   });
+  
   $('multiSoon').addEventListener('click', () => notify('Multiplayer rooms are planned. The exact math engine is already shared.'));
   $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('accountBtn').addEventListener('click', () => $('accountDialog').showModal());
