@@ -53,6 +53,11 @@ let cards = [], tiles = [], history = [], selected = { a: null, b: null }, opera
 let round = 0, nextId = 4, analysis = null, clockStart = 0, stoppedMs = 0, running = false, finished = false;
 let selectedDifficulty = 'Easy', busy = false;
 let clockInterval = null;
+let gameMode = 'solo';
+let mpRoomId = null, mpSnapshot = null, mpPollInterval = null, mpTickInterval = null;
+let mpOffsetMs = 0, mpRoundId = null, mpHandLoaded = false;
+let mpSubmitting = false, mpPendingExpression = null, mpFetching = false, mpActionBusy = false;
+let mpLastCountdown = null;
 
 function notify(message, kind = '') { $('banner').textContent = message; $('banner').className = `banner ${kind}`; }
 function drawClock() {
@@ -385,6 +390,7 @@ function showResult(message, ms, status = '') {
   $('difficultyChip').textContent = analysis.difficulty; $('difficultyChip').classList.remove('hidden'); $('difficultyChip').classList.add('difficulty');
 }
 async function completed() {
+  if (gameMode === 'multi') { await mpCompleted(); return; }
   if (finished || !analysis || !tiles.length) return;
   const check = verifySolution(cards, tiles[0].expr);
   if (!check.valid) { notify('The solution could not be verified. Please undo.', 'error'); return; }
@@ -408,6 +414,7 @@ async function completed() {
 }
 /** Solo-only forfeit: ending a run never writes local or server records. */
 function revealSolution() {
+  if (gameMode !== 'solo') return;
   if (!running || finished || busy || !analysis || cards.length !== 4) return;
   // The backend returns only a hand classification. Find the exact solution on
   // demand for verified online hands, never by reading the user's partial tiles.
@@ -451,7 +458,7 @@ function revealSolution() {
 }
 
 async function newHand() {
-  if (busy) return;
+  if (gameMode !== 'solo' || busy) return;
   busy = true; $('newHandBtn').disabled = true;
   $('revealSolutionBtn').disabled = true;
   stopClock();
@@ -674,6 +681,267 @@ function initialTheme() {
   try { stored = localStorage.getItem('24race-theme'); } catch { /* storage unavailable */ }
   applyTheme(stored === 'dark' ? 'dark' : 'light');
 }
+
+/* Multiplayer is a separate server-controlled match lifecycle. It reuses the
+   same exact card/drag engine but NEVER updates Solo records or enables Reveal. */
+const mpStorageKey = () => `race24-mp-room-${selectedFamilyId || 'none'}`;
+const mpLiveNow = () => Date.now() + mpOffsetMs;
+function mpSay(message, error = false) {
+  $('mpMessage').textContent = message;
+  $('mpMessage').classList.toggle('error', error);
+}
+function mpUseRoom(id) {
+  mpRoomId = id;
+  try {
+    if (id) localStorage.setItem(mpStorageKey(), id);
+    else localStorage.removeItem(mpStorageKey());
+  } catch { /* private browsing may disable storage */ }
+}
+function mpHideRound() {
+  mpRoundId = null; mpHandLoaded = false; mpSubmitting = false; mpPendingExpression = null;
+  running = false; finished = true; cards = []; tiles = []; history = []; analysis = null;
+  clearInteraction(); renderTiles();
+  $('expertNotice').classList.add('hidden');
+  $('difficultyChip').classList.add('hidden');
+  $('result').classList.add('hidden');
+  $('solutionReveal').classList.add('hidden');
+  $('handKeyChip').textContent = 'Waiting for a round';
+  $('timer').textContent = '01:30';
+}
+function mpSwitchMode(mode) {
+  if (mode === 'solo' && gameMode === 'multi' && mpSnapshot?.room.status === 'playing') {
+    mpSay('Stay in the multiplayer room until this round ends.', true); return;
+  }
+  if (gameMode === mode) return;
+  if (mode === 'multi') {
+    // If a Solo clock was running, leave that run without a record.
+    stopClock(); finished = true; running = false;
+    gameMode = 'multi';
+    document.body.classList.add('mp-active');
+    $('mpPanel').classList.remove('hidden');
+    $('multiSoon').classList.add('active'); $('soloTab').classList.remove('active');
+    $('playKicker').textContent = 'MULTIPLAYER // LIVE RACE';
+    $('timerLabel').textContent = 'TIME LEFT';
+    mpHideRound();
+    mpSay(familyMember ? 'Create a room or join with an R24 code.' : 'Join a family using the top-right button to play together.');
+    clearInterval(mpTickInterval); mpTickInterval = setInterval(mpTick, 100);
+    clearInterval(mpPollInterval); mpPollInterval = setInterval(() => void mpRefresh(), 1200);
+    if (mpRoomId) void mpRefresh();
+    else if (familyMember) {
+      let stored = null;
+      try { stored = localStorage.getItem(mpStorageKey()); } catch { /* optional */ }
+      if (stored) { mpRoomId = stored; void mpRefresh(); }
+    }
+  } else {
+    gameMode = 'solo';
+    clearInterval(mpTickInterval); clearInterval(mpPollInterval);
+    mpTickInterval = null; mpPollInterval = null;
+    document.body.classList.remove('mp-active');
+    $('mpPanel').classList.add('hidden');
+    $('multiSoon').classList.remove('active'); $('soloTab').classList.add('active');
+    $('playKicker').textContent = 'SOLO // TIME TRIAL';
+    $('timerLabel').textContent = 'YOUR TIME';
+    mpHideRound();
+    $('timer').textContent = '00:00.0';
+    $('banner').textContent = 'Press Deal cards to start a Solo time trial.';
+  }
+  mpRender();
+}
+async function mpRequest(action, extra = {}) {
+  if (!supabase || !user || !familyMember) throw Error('Connect to Supabase and join a family first.');
+  const start = Date.now();
+  const payload = { action, ...extra };
+  if (mpRoomId && !payload.roomId) payload.roomId = mpRoomId;
+  const data = await invoke('multiplayer', payload);
+  if (data.serverTime) mpOffsetMs = Date.parse(data.serverTime) - (start + Date.now()) / 2;
+  return data;
+}
+async function mpCreate() {
+  if (mpActionBusy || mpRoomId) return;
+  mpActionBusy = true; $('mpCreateBtn').disabled = true;
+  try {
+    const state = await mpRequest('create', {
+      familyId: selectedFamilyId, mode: $('mpMode').value, difficulty: $('mpDifficulty').value,
+      seconds: Number($('mpSeconds').value), grace: Number($('mpGrace').value), rounds: Number($('mpRounds').value),
+    });
+    mpUseRoom(state.room.id); mpApply(state); mpSay('Room created. Share the code and wait for everyone to press Ready.');
+  } catch (error) { mpSay(error.message, true); }
+  finally { mpActionBusy = false; $('mpCreateBtn').disabled = false; }
+}
+async function mpJoin() {
+  if (mpActionBusy || mpRoomId) return;
+  mpActionBusy = true; $('mpJoinBtn').disabled = true;
+  try {
+    const state = await mpRequest('join', { code: $('mpCodeInput').value.trim().toUpperCase() });
+    mpUseRoom(state.room.id); mpApply(state); mpSay('Joined! Press Ready when you are prepared to play.');
+  } catch (error) { mpSay(error.message, true); }
+  finally { mpActionBusy = false; $('mpJoinBtn').disabled = false; }
+}
+async function mpDo(action, extra = {}) {
+  if (!mpRoomId || mpActionBusy) return;
+  mpActionBusy = true;
+  for (const id of ['mpReadyBtn','mpStartBtn','mpLeaveBtn']) $(id).disabled = true;
+  try {
+    const state = await mpRequest(action, extra);
+    mpApply(state);
+    mpSay(action === 'start' ? 'Round starting. Good luck!' : action === 'rematch' ? 'Rematch lobby is open.' : 'Room updated.');
+  } catch (error) { mpSay(error.message, true); }
+  finally { mpActionBusy = false; mpRender(); }
+}
+async function mpLeave() {
+  if (!mpRoomId || mpActionBusy || mpSnapshot?.room.status === 'playing') return;
+  mpActionBusy = true;
+  try {
+    await mpRequest('leave');
+    mpUseRoom(null); mpSnapshot = null; mpHideRound(); mpRender();
+    mpSay('Left room. You can create or join another one.');
+  } catch (error) { mpSay(error.message, true); }
+  finally { mpActionBusy = false; mpRender(); }
+}
+async function mpRefresh() {
+  if (!mpRoomId || mpFetching || gameMode !== 'multi' || mpActionBusy) return;
+  mpFetching = true;
+  const expectedRoom = mpRoomId;
+  try {
+    const state = await mpRequest('status');
+    if (mpRoomId === expectedRoom && gameMode === 'multi') mpApply(state);
+  } catch (error) {
+    if (mpRoomId === expectedRoom) {
+      if (/room unavailable|room not found|not a member of this room/i.test(error.message)) {
+        mpUseRoom(null); mpSnapshot = null; mpHideRound(); mpRender();
+        mpSay('This room is no longer available. Create or join another room.', true);
+      } else mpSay(`Connection problem: ${error.message}`, true);
+    }
+  } finally { mpFetching = false; }
+}
+function mpApply(state) {
+  if (!state?.room || !state.players || state.room.id !== mpRoomId) return;
+  const previousRound = mpRoundId;
+  mpSnapshot = state;
+  const rd = state.round;
+  if (!rd || rd.id !== previousRound) {
+    mpHideRound();
+    mpRoundId = rd?.id || null;
+    mpLastCountdown = null;
+  }
+  if (rd?.cards && !mpHandLoaded && gameMode === 'multi') {
+    cards = rd.cards;
+    analysis = analyzeHand(cards);
+    tiles = cards.map((card, index) => leaf(card, index)); nextId = 4; history = [];
+    mpHandLoaded = true;
+    clearInteraction();
+    $('handKeyChip').textContent = rd.handKey;
+    $('difficultyChip').textContent = rd.difficulty;
+    $('difficultyChip').classList.remove('hidden');
+    $('expertNotice').classList.toggle('hidden', rd.difficulty !== 'Expert');
+    $('roundText').textContent = `Round ${String(rd.number).padStart(2, '0')}`;
+    $('solutionReveal').classList.add('hidden'); $('result').classList.add('hidden');
+    finished = state.room.status === 'results' || !!rd.yourFinish;
+    running = !finished;
+    renderTiles();
+    notify(running ? 'Race is on! Combine all four cards into 24.' : 'Round finished.');
+  }
+  if (rd?.yourFinish && !mpSubmitting) {
+    mpPendingExpression = null;
+    if (running || !finished) { running = false; finished = true; renderTiles(); }
+    notify(`Finished in place #${rd.yourFinish.place} (+${rd.yourFinish.points} pts)!`, 'success');
+  }
+  if (state.room.status === 'results') {
+    if (running || !finished) { running = false; finished = true; renderTiles(); }
+    if (!rd?.yourFinish) notify('Round ended. Wait for the next hand.', '');
+    mpSay(state.room.roundNumber === state.room.maxRounds ? 'Match finished! Start a rematch or leave the room.' : 'Round finished. Host can start the next round.');
+  }
+  mpRender(); mpTick();
+}
+function mpRender() {
+  if (gameMode !== 'multi') return;
+  const state = mpSnapshot, room = state?.room, rd = state?.round;
+  $('mpSetup').classList.toggle('hidden', !!room);
+  $('mpRoom').classList.toggle('hidden', !room);
+  if (!room) return;
+  const isHost = room.hostId === state.you;
+  const mine = state.players.find(p => p.isYou);
+  const ready = state.players.filter(p => p.ready).length;
+  $('mpRoomCode').textContent = room.code;
+  $('mpRoomDetails').textContent = `${room.mode === 'first' ? 'First Wins' : 'Everyone Finishes'} · ${room.difficulty} · ${room.seconds}s / round · ${room.maxRounds} rounds${room.mode === 'everyone' && room.grace ? ` · ${room.grace}s grace` : ''}`;
+  $('mpPhase').textContent = room.status === 'lobby' ? `${ready}/${state.players.length} ready` : room.status === 'playing' ? `Round ${room.roundNumber} / ${room.maxRounds}` : `Round ${room.roundNumber} complete`;
+  const placements = new Map((rd?.finishes || []).map(f => [f.playerId, f]));
+  $('mpPlayers').innerHTML = [...state.players].sort((a,b) => b.score - a.score || a.nickname.localeCompare(b.nickname)).map(p => {
+    const f = placements.get(p.id);
+    const label = room.status === 'lobby' ? (p.ready ? '✓ Ready' : 'Waiting') : f ? `✓ Finished #${f.place}${room.status==='results' ? ` · ${fmt(f.timeMs)}` : ''}` : room.status === 'results' ? 'Not finished' : 'Solving…';
+    const kick = isHost && !p.isYou && room.status !== 'playing'
+      ? `<button class="mp-kick" data-mp-kick="${p.id}" type="button" aria-label="Remove ${escapeHtml(p.nickname)}">Remove</button>` : '';
+    return `<div class="mp-player"><div class="mp-player-top"><span>${escapeHtml(p.nickname)}${p.isYou ? ' (you)' : ''}${p.isHost ? ' ★' : ''}</span><span>${p.score} pts</span></div><div class="mp-player-label">${escapeHtml(label)} ${kick}</div></div>`;
+  }).join('');
+  $('mpReadyBtn').classList.toggle('hidden', room.status !== 'lobby');
+  $('mpReadyBtn').textContent = mine?.ready ? 'Not ready' : "I'm ready";
+  $('mpReadyBtn').disabled = mpActionBusy;
+  $('mpStartBtn').classList.toggle('hidden', !isHost || (room.status !== 'lobby' && room.status !== 'results'));
+  const rematch = room.status === 'results' && room.roundNumber >= room.maxRounds;
+  $('mpStartBtn').textContent = rematch ? 'New match ↻' : room.status === 'results' ? 'Next round ↗' : 'Start match ↗';
+  $('mpStartBtn').disabled = mpActionBusy || (room.status === 'lobby' && (state.players.length < 2 || ready !== state.players.length));
+  $('mpLeaveBtn').disabled = mpActionBusy || room.status === 'playing';
+  $('mpRoundResults').classList.toggle('hidden', room.status !== 'results');
+  if (room.status === 'results') {
+    const standings = [...state.players].sort((a,b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
+    const finishNames = new Map(state.players.map(p => [p.id, p.nickname]));
+    const solved = (rd?.finishes || []).map(f => `${f.place}. ${escapeHtml(finishNames.get(f.playerId) || 'Player')} (+${f.points} pts)`);
+    const steps = (rd?.solutionSteps || []).map(step => `<li>${escapeHtml(step)}</li>`).join('');
+    $('mpRoundResults').innerHTML = `<h3>${room.roundNumber === room.maxRounds ? 'Match complete! 🏆' : 'Round complete'}</h3>
+      <p>${solved.length ? solved.join(' · ') : 'Nobody solved this round.'}</p>
+      ${room.roundNumber === room.maxRounds ? `<p><b>Winner: ${escapeHtml(standings[0]?.nickname || '—')}</b> · ${standings[0]?.score || 0} points</p>` : ''}
+      <details><summary>Show one solution</summary><ol>${steps}</ol></details>`;
+  }
+}
+function mpTick() {
+  if (gameMode !== 'multi') return;
+  const rd = mpSnapshot?.round, room = mpSnapshot?.room;
+  if (!rd || !room) { $('timer').textContent = '--:--'; return; }
+  if (room.status === 'results') { $('timer').textContent = '00:00'; return; }
+  const current = mpLiveNow();
+  const left = Date.parse(rd.endsAt) - current;
+  const until = Date.parse(rd.startsAt) - current;
+  if (until > 0) {
+    const text = `START ${Math.ceil(until/1000)}`;
+    if ($('timer').textContent !== text) $('timer').textContent = text;
+  } else {
+    const seconds = Math.max(0, Math.ceil(left / 1000));
+    const display = `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+    if ($('timer').textContent !== display) $('timer').textContent = display;
+    if (left > 0 && mpHandLoaded && !mpSnapshot.round.yourFinish && !mpSubmitting && !finished && !running) {
+      running = true; renderTiles(); notify('Race is on! Make 24.');
+    }
+    if (left <= 0 && running) { running = false; finished = true; renderTiles(); notify('Time is up. Waiting for official results.'); }
+  }
+}
+async function mpCompleted() {
+  if (mpSubmitting || !mpSnapshot?.round || !mpHandLoaded || !tiles[0]) return;
+  if (!verifySolution(cards, tiles[0].expr).valid) { notify('Invalid solution. Please undo.', 'error'); return; }
+  mpPendingExpression = tiles[0].expr;
+  mpSubmitting = true; running = false; finished = true; renderTiles();
+  notify('24! Submitting to the server…');
+  try {
+    const state = await mpRequest('submit', { roundId: mpSnapshot.round.id, expression: mpPendingExpression });
+    mpPendingExpression = null;
+    mpApply(state.state);
+    notify(`Verified! Place #${state.finish.place} · +${state.finish.points} points.`, 'success');
+  } catch (error) {
+    // An interrupted request may already have been accepted by the server.
+    // Refresh first so a retry never awards a second finish.
+    mpSay(`Submission: ${error.message}`, true);
+    await mpRefresh();
+    if (!mpSnapshot?.round?.yourFinish && mpSnapshot?.room.status === 'playing') {
+      running = true; finished = false; renderTiles();
+      notify(`Submission failed: ${error.message}. Tap the 24 tile to retry.`, 'error');
+      // A user can tap the finished 24 tile to retry without recomputing.
+      if (tiles.length === 1 && mpPendingExpression) {
+        const tile = document.querySelector('.number-tile');
+        tile?.addEventListener('click', () => { if (!mpSubmitting) void mpCompleted(); }, { once: true });
+      }
+    }
+  } finally { mpSubmitting = false; mpTick(); }
+}
+
 function wire() {
   $('newHandBtn').addEventListener('click', newHand);
   $('revealSolutionBtn').addEventListener('click', revealSolution);
@@ -693,7 +961,22 @@ function wire() {
       `${formatR(a.value)}  ?  ${formatR(b.value)}`;
   });
   
-  $('multiSoon').addEventListener('click', () => notify('Multiplayer rooms are planned. The exact math engine is already shared.'));
+  $('soloTab').addEventListener('click', () => mpSwitchMode('solo'));
+  $('multiSoon').addEventListener('click', () => void mpSwitchMode('multi'));
+  $('mpCreateBtn').addEventListener('click', () => void mpCreate());
+  $('mpJoinBtn').addEventListener('click', () => void mpJoin());
+  $('mpReadyBtn').addEventListener('click', () => void mpDo('ready', { ready: !mpSnapshot?.players.find(p => p.isYou)?.ready }));
+  $('mpStartBtn').addEventListener('click', () => void mpDo(mpSnapshot?.room.status === 'results' && mpSnapshot.room.roundNumber >= mpSnapshot.room.maxRounds ? 'rematch' : 'start'));
+  $('mpLeaveBtn').addEventListener('click', () => void mpLeave());
+  $('mpPlayers').addEventListener('click', e => {
+    const id = e.target.closest('[data-mp-kick]')?.dataset.mpKick;
+    if (id && mpSnapshot?.room.status !== 'playing') void mpDo('kick', { targetId: id });
+  });
+  $('mpCopyBtn').addEventListener('click', async () => {
+    if (!mpSnapshot) return;
+    try { await navigator.clipboard.writeText(mpSnapshot.room.code); $('mpMessage').textContent = 'Room code copied!'; }
+    catch { $('mpMessage').textContent = `Share this room code: ${mpSnapshot.room.code}`; }
+  });
   $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('accountBtn').addEventListener('click', () => $('accountDialog').showModal());
   $('familySelect').addEventListener('change', e => selectFamily(e.target.value));

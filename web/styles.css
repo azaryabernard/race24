@@ -331,3 +331,49 @@ h1 em { color: var(--teal); font-style: normal; }
   .solution-reveal { padding: 13px; }
   .solution-steps li { font-size: 16px; }
 }
+
+
+/* Private live-room interface, using the existing card interaction surface. */
+.mp-panel { margin-bottom: 18px; }
+.mp-message { margin: 5px 0 16px; line-height: 1.6; font-size: 13px; color: var(--muted); }
+.mp-setup { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px,1fr); gap: 24px; }
+.mp-setup h3 { margin: 0 0 13px; font: 700 15px 'DM Sans', sans-serif; }
+.mp-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
+.mp-fields label, .mp-join label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+.mp-fields select, #mpCodeInput { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-soft); color: var(--ink); font: 600 13px 'DM Sans',sans-serif; }
+.mp-join { border-left: 1px solid var(--line); padding-left: 20px; }
+#mpCodeInput { font: 700 14px 'DM Sans',sans-serif; letter-spacing: 1px; margin: 8px 0 14px; text-transform: uppercase; }
+.mp-room-head, .mp-roster-title, .mp-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mp-room-head { padding: 13px 0; border-bottom: 1px solid var(--line); }
+.mp-code { margin-top: 5px; font: 700 clamp(19px,3vw,27px) 'Silkscreen',monospace; overflow-wrap: anywhere; }
+.mp-room #mpRoomDetails { margin: 12px 0; font-size: 12px; }
+.mp-roster-title { font-size: 12px; margin: 15px 0 9px; }
+#mpPhase { font-size: 12px; color: var(--teal); }
+.mp-players { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.mp-player { padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-soft); min-width: 0; }
+.mp-player-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; }
+.mp-player-label { color: var(--muted); font-size: 11px; margin-top: 5px; }
+.mp-actions { justify-content: flex-start; margin-top: 15px; }
+.mp-round-results { border-top: 1px dashed var(--line); margin-top: 16px; padding-top: 13px; font-size: 13px; }
+.mp-round-results h3 { font: 700 15px 'DM Sans',sans-serif; margin: 0 0 8px; }
+.mp-round-results ol { padding-left: 24px; line-height: 1.7; }
+body.mp-active #soloSideColumn, body.mp-active #belowGrid { display: none; }
+body.mp-active #mainGrid { grid-template-columns: minmax(0,1fr); }
+body.mp-active #newHandBtn, body.mp-active #revealSolutionBtn { display: none; }
+body.mp-active .play-panel { max-width: 840px; width: 100%; margin: 0 auto; }
+body.mp-active .hero { display: none; }
+body.mp-active #mpPanel { display: block; }
+body.mp-active #mpPanel.hidden { display: none; }
+@media (max-width: 620px) {
+  .mp-setup { grid-template-columns: 1fr; }
+  .mp-fields { grid-template-columns: 1fr 1fr; }
+  .mp-join { border-left: 0; padding: 18px 0 0; border-top: 1px solid var(--line); }
+  .mp-players { grid-template-columns: 1fr; }
+  .mp-code { font-size: 19px; }
+  .mp-panel { padding: 18px 13px; }
+}
+
+.mp-kick { color: var(--muted); background: transparent; padding: 2px 5px; border: 0; text-decoration: underline; font-size: 11px; }
+.mp-kick:hover { color: var(--red); }
+
+.mp-message.error { color: var(--red); }

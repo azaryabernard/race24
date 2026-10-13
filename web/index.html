@@ -19,7 +19,7 @@
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="./" aria-label="Race24 home"><span class="brand-mark">R<span class="brand-flash">24</span></span><span>Race<span class="brand-last">24</span></span></a>
-      <nav class="nav-tabs" aria-label="Game modes"><button class="nav-tab active" type="button">Solo trial</button><button class="nav-tab" id="multiSoon" type="button">Multiplayer <span class="soon">soon</span></button></nav>
+      <nav class="nav-tabs" aria-label="Game modes"><button class="nav-tab active" id="soloTab" type="button">Solo trial</button><button class="nav-tab" id="multiSoon" type="button">Multiplayer <span class="soon">live</span></button></nav>
       <div class="top-actions"><button class="button subtle small theme-toggle" id="themeBtn" type="button" aria-label="Switch to light mode">☀ Light</button><span class="online-pill" id="onlinePill"><span class="status-dot"></span>Guest mode</span><button class="button subtle small" id="accountBtn" type="button">Join family</button></div>
     </header>
 
@@ -29,9 +29,40 @@
         <div class="hero-ornament" aria-hidden="true"><span class="mini-card mini-back">♣</span><span class="mini-card mini-front">A<span>♠</span></span></div>
       </section>
 
-      <div class="main-grid">
+      <section class="panel mp-panel hidden" id="mpPanel" aria-label="Multiplayer game room">
+        <div class="side-heading"><div><div class="kicker">LIVE // FAMILY RACE</div><h2>Multiplayer rooms</h2></div><span class="side-symbol">⚡</span></div>
+        <p id="mpMessage" class="mp-message" role="status" aria-live="polite">Join your family to race together.</p>
+        <div id="mpSetup" class="mp-setup">
+          <div class="mp-create">
+            <h3>Create a private room</h3>
+            <div class="mp-fields">
+              <label>Game mode<select id="mpMode"><option value="everyone">Everyone Finishes</option><option value="first">First Wins</option></select></label>
+              <label>Difficulty<select id="mpDifficulty"><option value="Mixed">Mixed</option><option value="Easy">Easy</option><option value="Medium">Medium</option><option value="Hard">Hard</option><option value="Expert">Expert</option></select></label>
+              <label>Round timer<select id="mpSeconds"><option value="90">90 seconds</option><option value="60">60 seconds</option><option value="120">120 seconds</option><option value="30">30 seconds</option></select></label>
+              <label>Rounds<select id="mpRounds"><option value="5">5 rounds</option><option value="3">3 rounds</option><option value="10">10 rounds</option><option value="1">1 round</option></select></label>
+              <label>Grace after first finish<select id="mpGrace"><option value="60">60 seconds</option><option value="30">30 seconds</option><option value="0">No extra limit</option></select></label>
+            </div>
+            <button class="button primary" id="mpCreateBtn" type="button">Create room ↗</button>
+          </div>
+          <div class="mp-join">
+            <h3>Join a friend's room</h3><label for="mpCodeInput">Room code</label>
+            <input id="mpCodeInput" maxlength="12" placeholder="R24-XXXXXXXX" autocapitalize="characters" autocomplete="off" spellcheck="false" />
+            <button class="button ghost" id="mpJoinBtn" type="button">Join room</button>
+          </div>
+        </div>
+        <div id="mpRoom" class="mp-room hidden">
+          <div class="mp-room-head"><div><span class="kicker">SHARE THIS ROOM CODE</span><div class="mp-code" id="mpRoomCode">R24-XXXXXXXX</div></div><button class="button ghost small" id="mpCopyBtn" type="button">Copy code</button></div>
+          <p id="mpRoomDetails" class="muted"></p>
+          <div class="mp-roster-title"><strong>Players &amp; scores</strong><span id="mpPhase"></span></div>
+          <div id="mpPlayers" class="mp-players"></div>
+          <div class="mp-actions"><button class="button primary hidden" id="mpReadyBtn" type="button">I'm ready</button><button class="button primary hidden" id="mpStartBtn" type="button">Start match</button><button class="button ghost" id="mpLeaveBtn" type="button">Leave room</button></div>
+          <div class="mp-round-results hidden" id="mpRoundResults" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <div class="main-grid" id="mainGrid">
         <section class="play-panel panel" aria-labelledby="playTitle">
-          <div class="panel-heading"><div><div class="kicker">SOLO // TIME TRIAL</div><h2 id="playTitle">Your hand</h2></div><div class="timer-wrap"><span class="timer-label">YOUR TIME</span><strong class="timer" id="timer">00:00.0</strong></div></div>
+          <div class="panel-heading"><div><div class="kicker" id="playKicker">SOLO // TIME TRIAL</div><h2 id="playTitle">Your hand</h2></div><div class="timer-wrap"><span class="timer-label" id="timerLabel">YOUR TIME</span><strong class="timer" id="timer">00:00.0</strong></div></div>
           <div id="expertNotice" class="expert-notice hidden" role="note" aria-live="polite"><span class="expert-mark" aria-hidden="true">!</span><div><strong>Expert difficulty</strong><span>An especially tricky hand. It may involve advanced operations or difficult fractions.</span></div></div>
           <div class="arena-meta"><span id="roundText">Round 01</span><span class="chip" id="handKeyChip">Ready for a hand</span><span class="chip hidden" id="difficultyChip"></span></div>
           <div id="banner" class="banner" role="status" aria-live="polite">Press “New hand” to start the clock.</div>
@@ -56,15 +87,15 @@
           </section>
         </section>
 
-        <aside class="side-col">
+        <aside class="side-col" id="soloSideColumn">
           <section class="panel stat-panel"><div class="side-heading"><div><div class="kicker">YOUR PROGRESS</div><h2>Personal bests</h2></div><span class="side-symbol">↗</span></div><div class="best-grid" id="bestGrid"></div><div class="stat-footer"><span id="solvedCount">0 hands solved</span><span id="recordCount">0 combinations</span></div></section>
           <section class="panel leaderboard-panel"><div class="side-heading"><div><div class="kicker">COMMUNITY</div><h2>Family leaderboard</h2></div><span class="side-symbol">♛</span></div><div class="family-picker hidden" id="familyPicker"><label for="familySelect">Family leaderboard</label><select id="familySelect" aria-label="Choose family leaderboard"></select></div><div class="leader-tabs" id="leaderTabs"></div><div id="leaderboard" class="leaderboard-list"><div class="empty-note">No family records to show yet.</div></div><div class="leader-footer">Fastest personal record within each difficulty group <span>↗</span></div></section>
         </aside>
       </div>
 
-      <section class="below-grid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted" id="recordSource">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty considers the easiest solution and how many helpful opening moves exist. Expert hands are flagged when dealt; other ratings appear after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
+      <section class="below-grid" id="belowGrid"><section class="panel history-panel"><div class="side-heading"><div><div class="kicker">HANDS YOU'VE MASTERED</div><h2>Combination records</h2></div><span class="caption-muted" id="recordSource">Saved on this device</span></div><div id="history" class="history-list"></div></section><section class="panel rules-panel"><div class="side-heading"><div><div class="kicker">HOW IT WORKS</div><h2>Exact arithmetic</h2></div><span class="side-symbol">∑</span></div><p>Every hand uses all four numbers exactly once. <b>A</b> can be 1 or 11, while <b>10 / J / Q / K</b> all count as 10.</p><p>Division can yield fractions. Powers require integer exponents; logarithms and roots only count when the result is an exact integer.</p><p class="muted">Difficulty considers the easiest solution and how many helpful opening moves exist. Expert hands are flagged when dealt; other ratings appear after a solution. Hands are identified by sorted values, without suits or card order.</p></section></section>
     </main>
-    <footer class="footer"><span>RACE24 / a tiny card puzzle</span><span>Solo live · Multiplayer-ready core</span></footer>
+    <footer class="footer"><span>RACE24 / a tiny card puzzle</span><span>Solo &amp; multiplayer · Play together</span></footer>
   </div>
 
   <dialog id="accountDialog" class="modal">

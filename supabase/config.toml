@@ -3,3 +3,6 @@ verify_jwt = true
 
 [functions.family]
 verify_jwt = true
+
+[functions.multiplayer]
+verify_jwt = true
