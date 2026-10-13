@@ -152,6 +152,32 @@ export function drawHand(random = Math.random) {
   return cards;
 }
 
+/** Turn a winning expression into three readable, exact intermediate steps.
+ *  The trace deliberately contains numerical values only, so a canonical hand
+ *  can reuse it with the same values in a different card order or with J/Q/K.
+ */
+function traceSolution(expression, cards) {
+  const steps = [], aceValues = [];
+  function visit(node) {
+    if (Object.hasOwn(node, 'card')) {
+      const rank = String(cards[node.card].rank).toUpperCase();
+      if (rank === 'A') aceValues.push(node.ace);
+      return rational(rank === 'A' ? node.ace : rankValue(rank));
+    }
+    const left = visit(node.left), right = visit(node.right);
+    const result = OPERATIONS[node.op].evaluate(left, right);
+    const a = formatR(left), b = formatR(right), c = formatR(result);
+    const text = node.op === 'log' ? `log base ${b} of ${a} = ${c}`
+      : node.op === 'root' ? `root(${a}, ${b}) = ${c}`
+      : `${a} ${{ '*': '×', '/': '÷' }[node.op] || node.op} ${b} = ${c}`;
+    steps.push(text);
+    return result;
+  }
+  const result = visit(expression);
+  if (steps.length !== 3 || !equalR(result, rational(TARGET))) throw Error('Invalid solver trace');
+  return { steps, aceValues };
+}
+
 /** Analyze four values on demand; state memoization favors the easiest valid path. */
 export function analyzeHand(cards) {
   cards = cards.map(c => typeof c === 'string' ? { rank: c, suit: '' } : c);
@@ -201,7 +227,10 @@ export function analyzeHand(cards) {
     else if (bestCost <= 8) difficulty = solutions >= 4 ? 'Hard' : 'Expert';
     else difficulty = 'Expert';
   }
-  const result = { key, solvable: !!best, difficulty, score: bestCost, solution: best?.text || null, exploredStates: seen.size, solutionStates: solutions };
+  const trace = best ? traceSolution(best.expr, cards) : null;
+  const result = { key, solvable: !!best, difficulty, score: bestCost, solution: best?.text || null,
+    solutionSteps: trace?.steps || null, solutionAceValues: trace?.aceValues || [],
+    exploredStates: seen.size, solutionStates: solutions };
   analysisCache.set(key, result);
   return result;
 }

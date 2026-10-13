@@ -1,3 +1,5 @@
+> **Multiple families:** See [MULTI_FAMILY_SETUP.md](MULTI_FAMILY_SETUP.md). Existing projects should run **only `003_multiple_families.sql`**, not the earlier setup scripts again. New projects should run migrations 001, 002, then 003.
+
 # Start here — 24 RACE (family edition)
 
 ## A. Play Solo Mode immediately
@@ -16,9 +18,10 @@ You can also upload the **extracted `dist` folder** to Netlify Drop to publish t
 ## B. Add your family leaderboard on Supabase
 
 1. Create a Supabase project. In **Authentication → Providers → Anonymous sign-ins**, **enable anonymous sign-ins**. No Google/email setup is needed.
-2. In the **SQL Editor**, run both files, **in order**:
+2. In the **SQL Editor**, run all three files, **in order**:
    - `supabase/migrations/001_initial.sql`
    - `supabase/migrations/002_family_keys.sql`
+   - `supabase/migrations/003_multiple_families.sql`
 3. Create a strong random bootstrap secret (at least 24 characters), e.g. `openssl rand -hex 24`. Store it **only** in **Supabase Edge Function Secrets** named `FAMILY_SETUP_SECRET` (or use `npx supabase secrets set FAMILY_SETUP_SECRET=...`). Do **not** add it to Netlify or the browser.
 4. Configure Netlify environment variables **for building the website**:
 
@@ -39,7 +42,7 @@ You can also upload the **extracted `dist` folder** to Netlify Drop to publish t
    ```
 
 6. Build and deploy the frontend again with those Netlify variables. Use Netlify's linked-repository deployment (the included `netlify.toml` builds and publishes `dist/`). **A prebuilt `dist` ZIP without your two public project values will only support local guest play.**
-7. Open the website → **Join family** → **Family organizer tools** → enter your family name and the bootstrap secret from step 3 → **Set up family**. **Copy both displayed keys**:
+7. Open the website → **Join family** → **Family organizer tools** → enter your family name and the bootstrap secret from step 3 → **Create family**. **Copy both displayed keys**:
    - `FAM-...` = code to share with friends and family.
    - `ADM-...` = organizer's private recovery/admin key; do **not** share it.
 8. Close the organizer tools and join with a nickname + your new family invitation code. **Save the personal `REC-...` recovery key** displayed after joining.

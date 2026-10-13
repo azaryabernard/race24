@@ -2,8 +2,9 @@ import { withSupabase } from 'npm:@supabase/server@1';
 
 const reply = (body: unknown, status = 200) => Response.json(body, { status });
 const normalize = (text: unknown) => typeof text === 'string' ? text.trim().toUpperCase() : '';
+const uuid = (text: unknown) => typeof text === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text);
 function newKey(prefix: string) {
-  const bytes = crypto.getRandomValues(new Uint8Array(prefix === 'FAM' ? 8 : 24)); // 64-bit invite; 192-bit recovery/admin
+  const bytes = crypto.getRandomValues(new Uint8Array(prefix === 'FAM' ? 8 : 24));
   const hex = [...bytes].map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
   return prefix + '-' + hex.match(/.{8}/g)!.join('-');
 }
@@ -26,117 +27,156 @@ export default {
     let input: Record<string, unknown>;
     try { input = await request.json(); }
     catch { return reply({ error: 'Invalid JSON' }, 400); }
-    const userId = ctx.userClaims?.id;
-    if (!userId) return reply({ error: 'Anonymous Supabase session required' }, 401);
+    const authId = ctx.userClaims?.id;
+    if (!authId) return reply({ error: 'Player session required' }, 401);
     const db = ctx.supabaseAdmin;
-    const { data: family, error: familyError } = await db.from('families').select('*').limit(1).maybeSingle();
-    if (familyError) return reply({ error: 'Family database unavailable' }, 500);
-    const { data: session } = await db.from('player_sessions').select('player_id').eq('auth_user_id', userId).maybeSingle();
-    const { data: member } = family && session ? await db.from('family_members')
-      .select('nickname,player_id').eq('family_id', family.id).eq('player_id', session.player_id).maybeSingle()
-      : { data: null };
+    const { data: session, error: sessionError } = await db.from('player_sessions')
+      .select('player_id').eq('auth_user_id', authId).maybeSingle();
+    if (sessionError) return reply({ error: 'Could not load player' }, 500);
+    const playerId: string | null = session?.player_id || null;
 
-    if (input.action === 'status') return reply({ configured: !!family, joined: !!member,
-      familyName: member ? family.name : null, nickname: member?.nickname || null });
+    // Private family names are returned only for memberships owned by the
+    // authenticated player's permanent identity.
+    async function memberships() {
+      if (!playerId) return [];
+      const { data: memberRows, error } = await db.from('family_members')
+        .select('family_id,nickname').eq('player_id', playerId);
+      if (error) throw Error('Could not load memberships');
+      if (!memberRows?.length) return [];
+      const { data: families, error: namesError } = await db.from('families')
+        .select('id,name').in('id', memberRows.map(m => m.family_id));
+      if (namesError) throw Error('Could not load family names');
+      const names = new Map((families || []).map(f => [f.id, f.name]));
+      return memberRows.map(m => ({ familyId: m.family_id, familyName: names.get(m.family_id) || 'Family', nickname: m.nickname }))
+        .sort((a, b) => a.familyName.localeCompare(b.familyName));
+    }
+    let joined: { familyId: string; familyName: string; nickname: string }[];
+    try { joined = await memberships(); }
+    catch { return reply({ error: 'Could not load memberships' }, 500); }
+
+    if (input.action === 'status') return reply({ memberships: joined });
 
     if (['bootstrap','join','recover','rotate-invite','rotate-admin'].includes(String(input.action))) {
       const { data: permitted, error } = await db.rpc('consume_family_action', {
-        p_auth: userId, p_action: String(input.action), p_max: 5,
+        p_auth: authId, p_action: String(input.action), p_max: 5,
       });
       if (error || permitted !== true) return reply({ error: 'Too many attempts; retry in 15 minutes' }, 429);
     }
 
     if (input.action === 'bootstrap') {
-      if (family) return reply({ error: 'Family already exists' }, 409);
+      // Only the site owner has the private Edge Function setup secret.
+      // Each family is independent: there is no project-wide singleton.
       const serverSecret = Deno.env.get('FAMILY_SETUP_SECRET') || '';
       if (serverSecret.length < 24 || typeof input.setupSecret !== 'string' ||
           await hash('setup:' + input.setupSecret) !== await hash('setup:' + serverSecret))
         return reply({ error: 'Invalid setup secret' }, 403);
       const name = typeof input.familyName === 'string' ? input.familyName.trim() : '';
       if (name.length < 2 || name.length > 50) return reply({ error: 'Family name must be 2–50 characters' }, 400);
-      const inviteCode = newKey('FAM'); const adminKey = newKey('ADM');
+      const inviteCode = newKey('FAM');
+      const adminKey = newKey('ADM');
       const { error } = await db.from('families').insert({
         name, invite_hash: await hash('invite:' + inviteCode), admin_key_hash: await hash('admin:' + adminKey),
       });
-      if (error) return reply({ error: 'Unable to create family (or already created)' }, 409);
-      return reply({ ok: true, inviteCode, adminKey });
+      if (error) return reply({ error: 'Unable to create this family' }, 409);
+      return reply({ ok: true, familyName: name, inviteCode, adminKey });
     }
-    if (!family) return reply({ error: 'Ask the organizer to set up the family first' }, 404);
 
     if (input.action === 'join') {
-      if (member) return reply({ error: 'Already joined' }, 409);
       const nickname = validNickname(input.nickname);
       if (!nickname) return reply({ error: 'Nickname must contain 2–24 letters or numbers' }, 400);
-      if (!validKey(input.inviteCode, 'FAM') || await hash('invite:' + normalize(input.inviteCode)) !== family.invite_hash)
-        return reply({ error: 'Invalid invitation code' }, 403);
-      if (session?.player_id && session.player_id !== userId) return reply({ error: 'Already recovered a different profile' }, 409);
-      const { error: mappingError } = await db.from('player_sessions').upsert({ auth_user_id: userId, player_id: userId });
-      if (mappingError) return reply({ error: 'Unable to create player identity' }, 500);
+      if (!validKey(input.inviteCode, 'FAM')) return reply({ error: 'Invalid invitation code' }, 403);
+      // Match the supplied code without disclosing any other family details.
+      const { data: target, error: familyError } = await db.from('families')
+        .select('id,name').eq('invite_hash', await hash('invite:' + normalize(input.inviteCode))).maybeSingle();
+      if (familyError || !target) return reply({ error: 'Invalid invitation code' }, 403);
+      if (joined.some(m => m.familyId === target.id)) return reply({ error: 'Already in this family' }, 409);
+
+      const permanentId = playerId || authId;
+      if (!playerId) {
+        const { error: mapError } = await db.from('player_sessions')
+          .insert({ auth_user_id: authId, player_id: permanentId });
+        if (mapError) return reply({ error: 'Could not create player identity' }, 500);
+      }
       const { error: joinError } = await db.from('family_members').insert({
-        family_id: family.id, player_id: userId, nickname,
+        family_id: target.id, player_id: permanentId, nickname,
       });
-      if (joinError) return reply({ error: 'Nickname already taken or unable to join' }, 409);
-      const recoveryKey = newKey('REC');
-      const { error: recoveryError } = await db.from('player_recovery').upsert({
-        player_id: userId, key_hash: await hash('recovery:' + recoveryKey),
-      });
-      if (recoveryError) return reply({ error: 'Joined, but recovery key creation failed. Please contact organizer.' }, 500);
-      return reply({ ok: true, nickname, familyName: family.name, recoveryKey });
+      if (joinError) return reply({ error: 'Nickname is already taken in that family' }, 409);
+
+      // A personal recovery key belongs to the PLAYER, not to one family.
+      // Joining a second family never invalidates their previous REC key.
+      let recoveryKey: string | undefined;
+      const { data: existingRecovery } = await db.from('player_recovery')
+        .select('player_id').eq('player_id', permanentId).maybeSingle();
+      if (!existingRecovery) {
+        recoveryKey = newKey('REC');
+        const { error } = await db.from('player_recovery').insert({
+          player_id: permanentId, key_hash: await hash('recovery:' + recoveryKey),
+        });
+        if (error) return reply({ error: 'Joined, but recovery key setup failed. Contact the organizer.' }, 500);
+      }
+      return reply({ ok: true, familyId: target.id, familyName: target.name, nickname, recoveryKey });
     }
 
     if (input.action === 'recover') {
-      if (member) return reply({ error: 'Already a member on this device' }, 409);
+      // Never silently overwrite an established player's sessions/memberships.
+      if (joined.length) return reply({ error: 'This device already has a player. Use the family switcher.' }, 409);
       if (!validKey(input.recoveryKey, 'REC')) return reply({ error: 'Invalid recovery key' }, 403);
-      const { data: found } = await db.from('player_recovery').select('player_id')
+      const { data: match } = await db.from('player_recovery').select('player_id')
         .eq('key_hash', await hash('recovery:' + normalize(input.recoveryKey))).maybeSingle();
-      if (!found) return reply({ error: 'Invalid recovery key' }, 403);
-      const { data: restored } = await db.from('family_members').select('nickname')
-        .eq('family_id', family.id).eq('player_id', found.player_id).maybeSingle();
-      if (!restored) return reply({ error: 'Recovery key does not belong to this family' }, 403);
-      const { error } = await db.from('player_sessions').upsert({ auth_user_id: userId, player_id: found.player_id });
+      if (!match) return reply({ error: 'Invalid recovery key' }, 403);
+      const { data: restored } = await db.from('family_members')
+        .select('family_id').eq('player_id', match.player_id).limit(1);
+      if (!restored?.length) return reply({ error: 'No memberships found for that key' }, 403);
+      const { error } = await db.from('player_sessions').upsert({
+        auth_user_id: authId, player_id: match.player_id,
+      }, { onConflict: 'auth_user_id' });
       if (error) return reply({ error: 'Could not recover player' }, 500);
-      return reply({ ok: true, nickname: restored.nickname, familyName: family.name });
+      return reply({ ok: true });
     }
 
     if (input.action === 'rotate-recovery') {
-      if (!member) return reply({ error: 'Join first' }, 403);
+      if (!joined.length || !playerId) return reply({ error: 'Join a family first' }, 403);
       const recoveryKey = newKey('REC');
       const { error } = await db.from('player_recovery').upsert({
-        player_id: member.player_id, key_hash: await hash('recovery:' + recoveryKey),
+        player_id: playerId, key_hash: await hash('recovery:' + recoveryKey),
         rotated_at: new Date().toISOString(),
       });
-      if (error) return reply({ error: 'Could not rotate recovery key' }, 500);
+      if (error) return reply({ error: 'Could not replace recovery key' }, 500);
       return reply({ ok: true, recoveryKey });
     }
 
     if (input.action === 'rename') {
-      if (!member) return reply({ error: 'Join first' }, 403);
+      if (!uuid(input.familyId) || !joined.some(m => m.familyId === input.familyId) || !playerId)
+        return reply({ error: 'Select one of your families' }, 403);
       const nickname = validNickname(input.nickname);
       if (!nickname) return reply({ error: 'Invalid nickname' }, 400);
       const { error } = await db.from('family_members').update({ nickname })
-        .eq('family_id', family.id).eq('player_id', member.player_id);
-      if (error) return reply({ error: 'Nickname unavailable' }, 409);
+        .eq('family_id', input.familyId).eq('player_id', playerId);
+      if (error) return reply({ error: 'Nickname is already taken in that family' }, 409);
       return reply({ ok: true, nickname });
     }
 
     if (input.action === 'rotate-invite' || input.action === 'rotate-admin') {
-      if (!validKey(input.adminKey, 'ADM') || await hash('admin:' + normalize(input.adminKey)) !== family.admin_key_hash)
-        return reply({ error: 'Invalid family admin recovery key' }, 403);
+      if (!validKey(input.adminKey, 'ADM')) return reply({ error: 'Invalid family admin key' }, 403);
+      const { data: family } = await db.from('families').select('id,name')
+        .eq('admin_key_hash', await hash('admin:' + normalize(input.adminKey))).maybeSingle();
+      if (!family) return reply({ error: 'Invalid family admin key' }, 403);
       if (input.action === 'rotate-invite') {
         const inviteCode = newKey('FAM');
         const { error } = await db.from('families').update({
           invite_hash: await hash('invite:' + inviteCode), updated_at: new Date().toISOString(),
         }).eq('id', family.id);
-        if (error) return reply({ error: 'Could not change family code' }, 500);
-        return reply({ ok: true, inviteCode });
+        if (error) return reply({ error: 'Could not replace invitation code' }, 500);
+        return reply({ ok: true, familyName: family.name, inviteCode });
       }
       const adminKey = newKey('ADM');
       const { error } = await db.from('families').update({
         admin_key_hash: await hash('admin:' + adminKey), updated_at: new Date().toISOString(),
       }).eq('id', family.id);
-      if (error) return reply({ error: 'Could not rotate admin key' }, 500);
-      return reply({ ok: true, adminKey });
+      if (error) return reply({ error: 'Could not replace admin key' }, 500);
+      return reply({ ok: true, familyName: family.name, adminKey });
     }
+
     return reply({ error: 'Unknown action' }, 400);
   }),
 };
