@@ -70,7 +70,7 @@ export default {
       const { error: handError } = await db.from('hands').upsert({
         hand_key: report.key, rules_version: RULES_VERSION,
         difficulty: report.difficulty, score: report.score,
-      }, { onConflict: 'hand_key,rules_version', ignoreDuplicates: true });
+      }, { onConflict: 'hand_key,rules_version' });
       if (handError) return json({ error: 'Could not save hand' }, 500);
       const { data, error } = await db.from('solo_challenges').insert({
         user_id: authId, family_id: familyId, cards,
